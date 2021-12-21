@@ -21,7 +21,6 @@ import (
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/doltdb"
 	"github.com/dolthub/dolt/go/libraries/doltcore/schema"
-	"github.com/dolthub/dolt/go/libraries/doltcore/schema/typeinfo"
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/globalstate"
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/index"
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/sqlutil"
@@ -53,17 +52,16 @@ type SessionRootSetter func(ctx *sql.Context, dbName string, root *doltdb.RootVa
 // editor after every SQL statement is incorrect and will return incorrect results. The single reliable exception is an
 // unbroken chain of INSERT statements, where we have taken pains to batch writes to speed things up.
 type sqlTableWriter struct {
-	tableName         string
-	dbName            string
-	sch               schema.Schema
-	autoIncCol        schema.Column
-	vrw               types.ValueReadWriter
-	autoIncrementType typeinfo.TypeInfo
-	kvToSQLRow        *index.KVToSqlRowConverter
-	tableEditor       editor.TableEditor
-	sess              WriteSession
-	aiTracker         globalstate.AutoIncrementTracker
-	batched           bool
+	tableName   string
+	dbName      string
+	sch         schema.Schema
+	autoIncCol  schema.Column
+	vrw         types.ValueReadWriter
+	kvToSQLRow  *index.KVToSqlRowConverter
+	tableEditor editor.TableEditor
+	sess        WriteSession
+	aiTracker   globalstate.AutoIncrementTracker
+	batched     bool
 
 	setter SessionRootSetter
 }
@@ -161,11 +159,6 @@ func (te *sqlTableWriter) Update(ctx *sql.Context, oldRow sql.Row, newRow sql.Ro
 
 func (te *sqlTableWriter) NextAutoIncrementValue(potentialVal, tableVal interface{}) (interface{}, error) {
 	return te.aiTracker.Next(te.tableName, potentialVal, tableVal)
-}
-
-func (te *sqlTableWriter) GetAutoIncrementValue() (interface{}, error) {
-	val := te.tableEditor.GetAutoIncrementValue()
-	return te.autoIncCol.TypeInfo.ConvertNomsValueToValue(val)
 }
 
 func (te *sqlTableWriter) SetAutoIncrementValue(ctx *sql.Context, val interface{}) error {
