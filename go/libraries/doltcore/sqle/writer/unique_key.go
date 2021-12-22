@@ -15,24 +15,76 @@
 package writer
 
 import (
+	"context"
+
 	"github.com/dolthub/go-mysql-server/sql"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/doltdb"
+	"github.com/dolthub/dolt/go/libraries/doltcore/schema"
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/index"
 )
 
 // uniqueKey enforces Unique Key constraints.
-// todo(andy): it should also maintain the index
+// todo(andy): it should also maintain the uniqueIndex
 type uniqueKey struct {
-	index    index.DoltIndex
-	indexSch sql.Schema
-	indexMap columnMapping
+	uniqueIndex index.DoltIndex
+	indexMap    columnMapping
+	expr        []sql.ColumnExpressionType
 }
 
 var _ writeDependency = uniqueKey{}
 
-func uniqueKeyValidatorForTable(ctx *sql.Context, tbl *doltdb.Table) (writeDependency, error) {
-	return nil, nil
+func uniqueKeysFromTable(ctx context.Context, db, table string, t *doltdb.Table, sch schema.Schema) (deps []writeDependency, err error) {
+	err = sch.Indexes().Iter(func(idx schema.Index) (stop bool, err error) {
+		if !idx.IsUnique() {
+			return
+		}
+
+		dep, err := makeUniqueKey(ctx, db, table, t, sch, idx)
+		if err != nil {
+			return false, err
+		}
+		deps = append(deps, dep)
+
+		return
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return deps, nil
+}
+
+func makeUniqueKey(ctx context.Context, db, table string, t *doltdb.Table, sch schema.Schema, idx schema.Index) (writeDependency, error) {
+	i, err := index.GetSecondaryIndex(ctx, db, table, t, sch, idx)
+	if err != nil {
+		return nil, err
+	}
+
+	expr := i.ColumnExpressionTypes(nil) // todo(andy)
+	indexMap := indexMapForIndex(sch, idx)
+
+	return uniqueKey{
+		uniqueIndex: i,
+		indexMap:    indexMap,
+		expr:        expr,
+	}, nil
+}
+
+func indexMapForIndex(sch schema.Schema, idx schema.Index) (mapping columnMapping) {
+	indexTags := idx.IndexedColumnTags()
+	mapping = make(columnMapping, len(indexTags))
+	cols := sch.GetAllCols().GetColumns()
+
+	for i, col := range cols {
+		for j, tag := range indexTags {
+			if col.Tag == tag {
+				mapping[j] = i
+				break
+			}
+		}
+	}
+	return
 }
 
 func (uk uniqueKey) ValidateInsert(ctx *sql.Context, row sql.Row) error {
@@ -94,26 +146,22 @@ func (uk uniqueKey) Close(ctx *sql.Context) (err error) {
 }
 
 func (uk uniqueKey) uniqueColumnsUnchanged(old, new sql.Row) (bool, error) {
-	return indexColumnsUnchanged(uk.indexSch, uk.indexMap, old, new)
+	return indexColumnsUnchanged(uk.expr, uk.indexMap, old, new)
 }
 
 func (uk uniqueKey) uniqueIndexLookup(ctx *sql.Context, row sql.Row) (sql.IndexLookup, error) {
-	builder := sql.NewIndexBuilder(ctx, uk.index)
+	builder := sql.NewIndexBuilder(ctx, uk.uniqueIndex)
 
 	for i, j := range uk.indexMap {
-		col := uk.indexSch[i]
-		expr := col.Source + "." + col.Name
-		builder.Equals(ctx, expr, row[j])
+		builder.Equals(ctx, uk.expr[i].Expression, row[j])
 	}
 
 	return builder.Build(ctx)
 }
 
-func indexColumnsUnchanged(indexSch sql.Schema, indexMap columnMapping, old, new sql.Row) (bool, error) {
+func indexColumnsUnchanged(expr []sql.ColumnExpressionType, indexMap columnMapping, old, new sql.Row) (bool, error) {
 	for i, j := range indexMap {
-		col := indexSch[i]
-
-		cmp, err := col.Type.Compare(old[j], new[j])
+		cmp, err := expr[i].Type.Compare(old[j], new[j])
 		if err != nil {
 			return false, err
 		}

@@ -15,9 +15,12 @@
 package writer
 
 import (
+	"context"
+
 	"github.com/dolthub/go-mysql-server/sql"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/doltdb"
+	"github.com/dolthub/dolt/go/libraries/doltcore/schema"
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/index"
 )
 
@@ -33,16 +36,29 @@ type writeDependency interface {
 }
 
 // primaryKey enforces Primary Key constraints.
-// todo(andy): it should also maintain the PK index
+// todo(andy): it should also maintain the PK primaryIndex
 type primaryKey struct {
-	idx index.DoltIndex
-	sch sql.Schema
+	primaryIndex index.DoltIndex
+	pkMap        columnMapping
+	expr         []sql.ColumnExpressionType
 }
 
 var _ writeDependency = primaryKey{}
 
-func primaryKeyValidatorForTable(ctx *sql.Context, tbl *doltdb.Table) (writeDependency, error) {
-	return nil, nil
+func primaryKeyFromTable(ctx context.Context, db, table string, t *doltdb.Table, sch schema.Schema) (writeDependency, error) {
+	idx, err := index.GetPrimaryKeyIndex(ctx, db, table, t, sch)
+	if err != nil {
+		return nil, err
+	}
+
+	pkMap := sch.GetPkOrdinals()
+	expr := idx.ColumnExpressionTypes(nil) // todo(andy)
+
+	return primaryKey{
+		primaryIndex: idx,
+		pkMap:        pkMap,
+		expr:         expr,
+	}, nil
 }
 
 func (pk primaryKey) ValidateInsert(ctx *sql.Context, row sql.Row) error {
@@ -93,13 +109,10 @@ func (pk primaryKey) Close(ctx *sql.Context) error {
 }
 
 func (pk primaryKey) pkIndexLookup(ctx *sql.Context, row sql.Row) (sql.IndexLookup, error) {
-	builder := sql.NewIndexBuilder(ctx, pk.idx)
+	builder := sql.NewIndexBuilder(ctx, pk.primaryIndex)
 
-	for i, col := range pk.sch {
-		if col.PrimaryKey {
-			expr := col.Source + "." + col.Name
-			builder.Equals(ctx, expr, row[i])
-		}
+	for i, j := range pk.pkMap {
+		builder.Equals(ctx, pk.expr[i].Expression, row[j])
 	}
 
 	return builder.Build(ctx)

@@ -15,6 +15,7 @@
 package writer
 
 import (
+	"context"
 	"io"
 
 	"github.com/dolthub/go-mysql-server/sql"
@@ -25,36 +26,80 @@ import (
 
 // foreignKeyParent enforces the parent side of a Foreign Key
 // constraint, and executes reference option logic.
-// It does not maintain the Foreign Key index.
+// It does not maintain the Foreign Key uniqueIndex.
 type foreignKeyParent struct {
-	childIndex index.DoltIndex
-	indexSch   sql.Schema
 	fk         doltdb.ForeignKey
+	childIndex index.DoltIndex
+	expr       []sql.ColumnExpressionType
 
-	// mapping from parent table to child FK index.
+	// mapping from parent table to child FK uniqueIndex.
 	parentMap columnMapping
-	// mapping from child table to child FK index.
+	// mapping from child table to child FK uniqueIndex.
 	childMap columnMapping
 
-	childTable writeDependency
+	childDeps []writeDependency
 }
 
 var _ writeDependency = foreignKeyParent{}
 
-func makeParentValidator(ctx *sql.Context, root *doltdb.RootValue, fk doltdb.ForeignKey, child tableWriter) (writeDependency, error) {
-	return nil, nil
+func makeFkParentConstraint(ctx context.Context, db string, root *doltdb.RootValue, fk doltdb.ForeignKey, child tableWriter) (writeDependency, error) {
+	parentTbl, ok, err := root.GetTable(ctx, fk.ReferencedTableName)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, doltdb.ErrTableNotFound
+	}
+
+	parentSch, err := parentTbl.GetSchema(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pi := parentSch.Indexes().GetByName(fk.ReferencedTableIndex)
+
+	childTbl, ok, err := root.GetTable(ctx, fk.TableName)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, doltdb.ErrTableNotFound
+	}
+
+	childSch, err := childTbl.GetSchema(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ci := childSch.Indexes().GetByName(fk.TableIndex)
+
+	childIndex, err := index.GetSecondaryIndex(ctx, db, fk.TableName, childTbl, childSch, ci)
+	if err != nil {
+		return nil, err
+	}
+
+	parentMap := indexMapForIndex(parentSch, pi)
+	childMap := indexMapForIndex(childSch, ci)
+	expr := childIndex.ColumnExpressionTypes(nil) // todo(andy)
+
+	return foreignKeyParent{
+		fk:         fk,
+		childIndex: childIndex,
+		expr:       expr,
+		parentMap:  parentMap,
+		childMap:   childMap,
+		childDeps:  child.dependencies,
+	}, nil
 }
 
-func (v foreignKeyParent) ValidateInsert(ctx *sql.Context, row sql.Row) error {
+func (p foreignKeyParent) ValidateInsert(ctx *sql.Context, row sql.Row) error {
 	return nil
 }
 
-func (v foreignKeyParent) Insert(ctx *sql.Context, row sql.Row) error {
+func (p foreignKeyParent) Insert(ctx *sql.Context, row sql.Row) error {
 	return nil
 }
 
-func (v foreignKeyParent) ValidateUpdate(ctx *sql.Context, old, new sql.Row) error {
-	ok, err := v.parentColumnsUnchanged(old, new)
+func (p foreignKeyParent) ValidateUpdate(ctx *sql.Context, old, new sql.Row) error {
+	ok, err := p.parentColumnsUnchanged(old, new)
 	if err != nil {
 		return err
 	}
@@ -62,7 +107,7 @@ func (v foreignKeyParent) ValidateUpdate(ctx *sql.Context, old, new sql.Row) err
 		return nil
 	}
 
-	lookup, err := v.childIndexLookup(ctx, new)
+	lookup, err := p.childIndexLookup(ctx, new)
 	if err != nil {
 		return err
 	}
@@ -72,20 +117,20 @@ func (v foreignKeyParent) ValidateUpdate(ctx *sql.Context, old, new sql.Row) err
 		return err
 	}
 
-	if isRestrict(v.fk.OnUpdate) {
+	if isRestrict(p.fk.OnUpdate) {
 		rows, err := sql.RowIterToRows(ctx, iter)
 		if err != nil {
 			return err
 		}
 		if len(rows) > 0 {
-			return v.violationErr(new)
+			return p.violationErr(new)
 		}
 	}
 
-	return v.validateUpdateReferenceOption(ctx, new, iter)
+	return p.validateUpdateReferenceOption(ctx, new, iter)
 }
 
-func (v foreignKeyParent) validateUpdateReferenceOption(ctx *sql.Context, parent sql.Row, iter sql.RowIter) error {
+func (p foreignKeyParent) validateUpdateReferenceOption(ctx *sql.Context, parent sql.Row, iter sql.RowIter) error {
 	for {
 		before, err := iter.Next(ctx)
 		if err == io.EOF {
@@ -95,17 +140,21 @@ func (v foreignKeyParent) validateUpdateReferenceOption(ctx *sql.Context, parent
 			return err
 		}
 
-		switch v.fk.OnUpdate {
+		switch p.fk.OnUpdate {
 		case doltdb.ForeignKeyReferenceOption_SetNull:
-			after := childRowSetNull(v.childMap, before)
-			if err = v.childTable.ValidateUpdate(ctx, before, after); err != nil {
-				return err
+			after := childRowSetNull(p.childMap, before)
+			for _, dep := range p.childDeps {
+				if err = dep.ValidateUpdate(ctx, before, after); err != nil {
+					return err
+				}
 			}
 
 		case doltdb.ForeignKeyReferenceOption_Cascade:
-			after := childRowCascade(v.parentMap, v.childMap, parent, before)
-			if err = v.childTable.ValidateUpdate(ctx, before, after); err != nil {
-				return err
+			after := childRowCascade(p.parentMap, p.childMap, parent, before)
+			for _, dep := range p.childDeps {
+				if err = dep.ValidateUpdate(ctx, before, after); err != nil {
+					return err
+				}
 			}
 
 		default:
@@ -114,15 +163,15 @@ func (v foreignKeyParent) validateUpdateReferenceOption(ctx *sql.Context, parent
 	}
 }
 
-func (v foreignKeyParent) Update(ctx *sql.Context, old, new sql.Row) error {
-	if isRestrict(v.fk.OnUpdate) {
+func (p foreignKeyParent) Update(ctx *sql.Context, old, new sql.Row) error {
+	if isRestrict(p.fk.OnUpdate) {
 		return nil // handled by validator
 	}
-	if containsNulls(v.parentMap, new) {
+	if containsNulls(p.parentMap, new) {
 		return nil
 	}
 
-	ok, err := v.parentColumnsUnchanged(old, new)
+	ok, err := p.parentColumnsUnchanged(old, new)
 	if err != nil {
 		return err
 	}
@@ -130,7 +179,7 @@ func (v foreignKeyParent) Update(ctx *sql.Context, old, new sql.Row) error {
 		return nil
 	}
 
-	lookup, err := v.childIndexLookup(ctx, old)
+	lookup, err := p.childIndexLookup(ctx, old)
 	if err != nil {
 		return err
 	}
@@ -140,10 +189,10 @@ func (v foreignKeyParent) Update(ctx *sql.Context, old, new sql.Row) error {
 		return err
 	}
 
-	return v.executeUpdateReferenceOption(ctx, new, iter)
+	return p.executeUpdateReferenceOption(ctx, new, iter)
 }
 
-func (v foreignKeyParent) executeUpdateReferenceOption(ctx *sql.Context, parent sql.Row, iter sql.RowIter) error {
+func (p foreignKeyParent) executeUpdateReferenceOption(ctx *sql.Context, parent sql.Row, iter sql.RowIter) error {
 	for {
 		before, err := iter.Next(ctx)
 		if err == io.EOF {
@@ -153,17 +202,21 @@ func (v foreignKeyParent) executeUpdateReferenceOption(ctx *sql.Context, parent 
 			return err
 		}
 
-		switch v.fk.OnUpdate {
+		switch p.fk.OnUpdate {
 		case doltdb.ForeignKeyReferenceOption_SetNull:
-			after := childRowSetNull(v.childMap, before)
-			if err = v.childTable.Update(ctx, before, after); err != nil {
-				return err
+			after := childRowSetNull(p.childMap, before)
+			for _, dep := range p.childDeps {
+				if err = dep.Update(ctx, before, after); err != nil {
+					return err
+				}
 			}
 
 		case doltdb.ForeignKeyReferenceOption_Cascade:
-			after := childRowCascade(v.parentMap, v.childMap, parent, before)
-			if err = v.childTable.Update(ctx, before, after); err != nil {
-				return err
+			after := childRowCascade(p.parentMap, p.childMap, parent, before)
+			for _, dep := range p.childDeps {
+				if err = dep.Update(ctx, before, after); err != nil {
+					return err
+				}
 			}
 
 		default:
@@ -172,12 +225,12 @@ func (v foreignKeyParent) executeUpdateReferenceOption(ctx *sql.Context, parent 
 	}
 }
 
-func (v foreignKeyParent) ValidateDelete(ctx *sql.Context, row sql.Row) error {
-	if containsNulls(v.parentMap, row) {
+func (p foreignKeyParent) ValidateDelete(ctx *sql.Context, row sql.Row) error {
+	if containsNulls(p.parentMap, row) {
 		return nil
 	}
 
-	lookup, err := v.childIndexLookup(ctx, row)
+	lookup, err := p.childIndexLookup(ctx, row)
 	if err != nil {
 		return err
 	}
@@ -187,20 +240,20 @@ func (v foreignKeyParent) ValidateDelete(ctx *sql.Context, row sql.Row) error {
 		return err
 	}
 
-	if isRestrict(v.fk.OnDelete) {
+	if isRestrict(p.fk.OnDelete) {
 		rows, err := sql.RowIterToRows(ctx, iter)
 		if err != nil {
 			return err
 		}
 		if len(rows) > 0 {
-			return v.violationErr(row)
+			return p.violationErr(row)
 		}
 	}
 
-	return v.validateDeleteReferenceOption(ctx, row, iter)
+	return p.validateDeleteReferenceOption(ctx, row, iter)
 }
 
-func (v foreignKeyParent) validateDeleteReferenceOption(ctx *sql.Context, parent sql.Row, iter sql.RowIter) error {
+func (p foreignKeyParent) validateDeleteReferenceOption(ctx *sql.Context, parent sql.Row, iter sql.RowIter) error {
 	for {
 		before, err := iter.Next(ctx)
 		if err == io.EOF {
@@ -210,16 +263,20 @@ func (v foreignKeyParent) validateDeleteReferenceOption(ctx *sql.Context, parent
 			return err
 		}
 
-		switch v.fk.OnUpdate {
+		switch p.fk.OnUpdate {
 		case doltdb.ForeignKeyReferenceOption_SetNull:
-			after := childRowSetNull(v.childMap, before)
-			if err = v.childTable.ValidateUpdate(ctx, before, after); err != nil {
-				return err
+			after := childRowSetNull(p.childMap, before)
+			for _, dep := range p.childDeps {
+				if err = dep.ValidateUpdate(ctx, before, after); err != nil {
+					return err
+				}
 			}
 
 		case doltdb.ForeignKeyReferenceOption_Cascade:
-			if err = v.childTable.ValidateDelete(ctx, before); err != nil {
-				return err
+			for _, dep := range p.childDeps {
+				if err = dep.ValidateDelete(ctx, before); err != nil {
+					return err
+				}
 			}
 
 		default:
@@ -228,15 +285,15 @@ func (v foreignKeyParent) validateDeleteReferenceOption(ctx *sql.Context, parent
 	}
 }
 
-func (v foreignKeyParent) Delete(ctx *sql.Context, row sql.Row) error {
-	if isRestrict(v.fk.OnUpdate) {
+func (p foreignKeyParent) Delete(ctx *sql.Context, row sql.Row) error {
+	if isRestrict(p.fk.OnUpdate) {
 		return nil
 	}
-	if containsNulls(v.parentMap, row) {
+	if containsNulls(p.parentMap, row) {
 		return nil
 	}
 
-	lookup, err := v.childIndexLookup(ctx, row)
+	lookup, err := p.childIndexLookup(ctx, row)
 	if err != nil {
 		return err
 	}
@@ -246,10 +303,10 @@ func (v foreignKeyParent) Delete(ctx *sql.Context, row sql.Row) error {
 		return err
 	}
 
-	return v.executeDeleteReferenceOption(ctx, row, iter)
+	return p.executeDeleteReferenceOption(ctx, row, iter)
 }
 
-func (v foreignKeyParent) executeDeleteReferenceOption(ctx *sql.Context, parent sql.Row, iter sql.RowIter) error {
+func (p foreignKeyParent) executeDeleteReferenceOption(ctx *sql.Context, parent sql.Row, iter sql.RowIter) error {
 	for {
 		before, err := iter.Next(ctx)
 		if err == io.EOF {
@@ -259,16 +316,20 @@ func (v foreignKeyParent) executeDeleteReferenceOption(ctx *sql.Context, parent 
 			return err
 		}
 
-		switch v.fk.OnUpdate {
+		switch p.fk.OnUpdate {
 		case doltdb.ForeignKeyReferenceOption_SetNull:
-			after := childRowSetNull(v.childMap, before)
-			if err = v.childTable.Update(ctx, before, after); err != nil {
-				return err
+			after := childRowSetNull(p.childMap, before)
+			for _, dep := range p.childDeps {
+				if err = dep.Update(ctx, before, after); err != nil {
+					return err
+				}
 			}
 
 		case doltdb.ForeignKeyReferenceOption_Cascade:
-			if err = v.childTable.Delete(ctx, before); err != nil {
-				return err
+			for _, dep := range p.childDeps {
+				if err = dep.Delete(ctx, before); err != nil {
+					return err
+				}
 			}
 
 		default:
@@ -277,30 +338,28 @@ func (v foreignKeyParent) executeDeleteReferenceOption(ctx *sql.Context, parent 
 	}
 }
 
-func (v foreignKeyParent) Close(ctx *sql.Context) error {
+func (p foreignKeyParent) Close(ctx *sql.Context) error {
 	return nil
 }
 
-func (v foreignKeyParent) parentColumnsUnchanged(old, new sql.Row) (bool, error) {
-	return indexColumnsUnchanged(v.indexSch, v.parentMap, old, new)
+func (p foreignKeyParent) parentColumnsUnchanged(old, new sql.Row) (bool, error) {
+	return indexColumnsUnchanged(p.expr, p.parentMap, old, new)
 }
 
-func (v foreignKeyParent) childIndexLookup(ctx *sql.Context, row sql.Row) (sql.IndexLookup, error) {
-	builder := sql.NewIndexBuilder(ctx, v.childIndex)
+func (p foreignKeyParent) childIndexLookup(ctx *sql.Context, row sql.Row) (sql.IndexLookup, error) {
+	builder := sql.NewIndexBuilder(ctx, p.childIndex)
 
-	for i, j := range v.parentMap {
-		col := v.indexSch[i]
-		expr := col.Source + "." + col.Name
-		builder.Equals(ctx, expr, row[j])
+	for i, j := range p.parentMap {
+		builder.Equals(ctx, p.expr[i].Expression, row[j])
 	}
 
 	return builder.Build(ctx)
 }
 
-func (v foreignKeyParent) violationErr(row sql.Row) error {
+func (p foreignKeyParent) violationErr(row sql.Row) error {
 	// todo(andy): incorrect string for key
 	s := sql.FormatRow(row)
-	return sql.ErrForeignKeyParentViolation.New(v.fk.Name, v.fk.TableName, v.fk.ReferencedTableName, s)
+	return sql.ErrForeignKeyParentViolation.New(p.fk.Name, p.fk.TableName, p.fk.ReferencedTableName, s)
 }
 
 func isRestrict(opt doltdb.ForeignKeyReferenceOption) bool {
@@ -328,14 +387,14 @@ func childRowCascade(parentMap, childMap columnMapping, parent, child sql.Row) (
 
 // todo(andy): the following functions are deprecated
 
-func (v foreignKeyParent) StatementBegin(ctx *sql.Context) {
+func (p foreignKeyParent) StatementBegin(ctx *sql.Context) {
 	return
 }
 
-func (v foreignKeyParent) DiscardChanges(ctx *sql.Context, errorEncountered error) error {
+func (p foreignKeyParent) DiscardChanges(ctx *sql.Context, errorEncountered error) error {
 	return nil
 }
 
-func (v foreignKeyParent) StatementComplete(ctx *sql.Context) error {
+func (p foreignKeyParent) StatementComplete(ctx *sql.Context) error {
 	return nil
 }

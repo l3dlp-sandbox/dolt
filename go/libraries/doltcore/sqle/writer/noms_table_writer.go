@@ -15,10 +15,12 @@
 package writer
 
 import (
+	"context"
+	"fmt"
+
 	"github.com/dolthub/go-mysql-server/sql"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/doltdb"
-
 	"github.com/dolthub/dolt/go/libraries/doltcore/schema"
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/index"
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/sqlutil"
@@ -36,9 +38,44 @@ type nomsTableWriter struct {
 	tableEditor editor.TableEditor
 }
 
+func makeNomsTableWriter(ctx context.Context, root *doltdb.RootValue, table, database string, opts editor.Options) (nw nomsTableWriter, err error) {
+	t, ok, err := root.GetTable(ctx, table)
+	if err != nil {
+		return nw, err
+	}
+	if !ok {
+		return nw, fmt.Errorf("unable to create table editor as `%s` is missing", table)
+	}
+
+	sch, err := t.GetSchema(ctx)
+	if err != nil {
+		return nw, err
+	}
+
+	tableEditor, err := editor.NewTableEditor(ctx, t, sch, table, opts)
+	if err != nil {
+		return nw, err
+	}
+
+	autoCol := autoIncrementColFromSchema(sch)
+	conv := index.NewKVToSqlRowConverterForCols(t.Format(), sch)
+
+	nw = nomsTableWriter{
+		tableName:   table,
+		dbName:      database,
+		sch:         sch,
+		autoIncCol:  autoCol,
+		vrw:         t.ValueReadWriter(),
+		kvToSQLRow:  conv,
+		tableEditor: tableEditor,
+	}
+
+	return nw, nil
+}
+
 var _ sql.AutoIncrementSetter = &nomsTableWriter{}
 
-func (te *nomsTableWriter) Insert(ctx *sql.Context, sqlRow sql.Row) error {
+func (te nomsTableWriter) Insert(ctx *sql.Context, sqlRow sql.Row) error {
 	if !schema.IsKeyless(te.sch) {
 		k, v, tagToVal, err := sqlutil.DoltKeyValueAndMappingFromSqlRow(ctx, te.vrw, sqlRow, te.sch)
 		if err != nil {
@@ -67,7 +104,7 @@ func (te *nomsTableWriter) Insert(ctx *sql.Context, sqlRow sql.Row) error {
 	return err
 }
 
-func (te *nomsTableWriter) Delete(ctx *sql.Context, sqlRow sql.Row) error {
+func (te nomsTableWriter) Delete(ctx *sql.Context, sqlRow sql.Row) error {
 	if !schema.IsKeyless(te.sch) {
 		k, tagToVal, err := sqlutil.DoltKeyAndMappingFromSqlRow(ctx, te.vrw, sqlRow, te.sch)
 		if err != nil {
@@ -98,7 +135,7 @@ func (te *nomsTableWriter) Delete(ctx *sql.Context, sqlRow sql.Row) error {
 	}
 }
 
-func (te *nomsTableWriter) Update(ctx *sql.Context, oldRow sql.Row, newRow sql.Row) error {
+func (te nomsTableWriter) Update(ctx *sql.Context, oldRow sql.Row, newRow sql.Row) error {
 	dOldRow, err := sqlutil.SqlRowToDoltRow(ctx, te.vrw, oldRow, te.sch)
 	if err != nil {
 		return err
@@ -118,7 +155,7 @@ func (te *nomsTableWriter) Update(ctx *sql.Context, oldRow sql.Row, newRow sql.R
 	return err
 }
 
-func (te *nomsTableWriter) SetAutoIncrementValue(ctx *sql.Context, val interface{}) error {
+func (te nomsTableWriter) SetAutoIncrementValue(ctx *sql.Context, val interface{}) error {
 	nomsVal, err := te.autoIncCol.TypeInfo.ConvertValueToNomsValue(ctx, te.vrw, val)
 	if err != nil {
 		return err
@@ -130,33 +167,33 @@ func (te *nomsTableWriter) SetAutoIncrementValue(ctx *sql.Context, val interface
 }
 
 // StatementBegin implements the interface sql.TableEditor.
-func (te *nomsTableWriter) StatementBegin(ctx *sql.Context) {
+func (te nomsTableWriter) StatementBegin(ctx *sql.Context) {
 	te.tableEditor.StatementStarted(ctx)
 }
 
 // DiscardChanges implements the interface sql.TableEditor.
-func (te *nomsTableWriter) DiscardChanges(ctx *sql.Context, errorEncountered error) error {
+func (te nomsTableWriter) DiscardChanges(ctx *sql.Context, errorEncountered error) error {
 	return te.tableEditor.StatementFinished(ctx, true)
 }
 
 // StatementComplete implements the interface sql.TableEditor.
-func (te *nomsTableWriter) StatementComplete(ctx *sql.Context) error {
+func (te nomsTableWriter) StatementComplete(ctx *sql.Context) error {
 	return te.tableEditor.StatementFinished(ctx, false)
 }
 
-func (te *nomsTableWriter) Table(ctx *sql.Context) (*doltdb.Table, error) {
+func (te nomsTableWriter) Table(ctx context.Context) (*doltdb.Table, error) {
 	return te.tableEditor.Table(ctx)
 }
 
 // Close implements Closer
-func (te *nomsTableWriter) Close(ctx *sql.Context) error {
+func (te nomsTableWriter) Close(ctx *sql.Context) error {
 	return nil
 }
 
-func (te *nomsTableWriter) resolveFks(ctx *sql.Context) error {
-	panic("unimplemented")
+func (te nomsTableWriter) resolveFks(ctx *sql.Context) error {
+	return nil // todo(andy)
 }
 
-func (te *nomsTableWriter) duplicateKeyErrFunc(keyString, indexName string, k, v types.Tuple, isPk bool) error {
+func (te nomsTableWriter) duplicateKeyErrFunc(keyString, indexName string, k, v types.Tuple, isPk bool) error {
 	panic("unimplemented")
 }

@@ -34,8 +34,8 @@ import (
 type sessionedTableEditor struct {
 	tableEditSession  *tableEditSession
 	tableEditor       editor.TableEditor
-	referencedTables  []doltdb.ForeignKey // The tables that we reference to ensure an insert or update is valid
-	referencingTables []doltdb.ForeignKey // The tables that reference us to ensure their inserts and updates are valid
+	referencedTables  []doltdb.ForeignKey // The writers that we reference to ensure an insert or update is valid
+	referencingTables []doltdb.ForeignKey // The writers that reference us to ensure their inserts and updates are valid
 	indexSchemaCache  map[string]schema.Schema
 	dirty             bool
 }
@@ -104,7 +104,7 @@ func (ste *sessionedTableEditor) DeleteRow(ctx context.Context, r row.Row) error
 	return ste.tableEditor.DeleteRow(ctx, r)
 }
 
-// UpdateRow takes the current row and new row, and updates it accordingly. Any applicable rows from tables that have a
+// UpdateRow takes the current row and new row, and updates it accordingly. Any applicable rows from writers that have a
 // foreign key referencing this table will also be updated.
 func (ste *sessionedTableEditor) UpdateRow(ctx context.Context, dOldRow row.Row, dNewRow row.Row, errFunc editor.PKDuplicateErrFunc) error {
 	ste.tableEditSession.writeMutex.RLock()

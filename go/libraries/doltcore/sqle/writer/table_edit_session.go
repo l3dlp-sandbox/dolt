@@ -99,7 +99,7 @@ func (tes *tableEditSession) GetTableWriter(ctx context.Context, table string, d
 	}, nil
 }
 
-// Flush returns an updated root with all of the changed tables.
+// Flush returns an updated root with all of the changed writers.
 func (tes *tableEditSession) Flush(ctx context.Context) (*doltdb.RootValue, error) {
 	tes.writeMutex.Lock()
 	defer tes.writeMutex.Unlock()
@@ -108,7 +108,7 @@ func (tes *tableEditSession) Flush(ctx context.Context) (*doltdb.RootValue, erro
 }
 
 // SetRoot uses the given root to set all open table editors to the state as represented in the root. If any
-// tables are removed in the root, but have open table editors, then the references to those are removed. If those
+// writers are removed in the root, but have open table editors, then the references to those are removed. If those
 // removed table's editors are used after this, then the behavior is undefined. This will lose any changes that have not
 // been flushed. If the purpose is to add a new table, foreign key, etc. (using Flush followed up with SetRoot), then
 // use UpdateRoot. Calling the two functions manually for the purposes of root modification may lead to race conditions.
@@ -261,7 +261,7 @@ func (tes *tableEditSession) getTableEditor(ctx context.Context, tableName strin
 
 // loadForeignKeys loads all tables mentioned in foreign keys for the given editor
 func (tes *tableEditSession) loadForeignKeys(ctx context.Context, localTableEditor *sessionedTableEditor) error {
-	// these are the tables that reference us, so we need to update them
+	// these are the writers that reference us, so we need to update them
 	for _, foreignKey := range localTableEditor.referencingTables {
 		if !foreignKey.IsResolved() {
 			continue
@@ -271,7 +271,7 @@ func (tes *tableEditSession) loadForeignKeys(ctx context.Context, localTableEdit
 			return err
 		}
 	}
-	// these are the tables that we reference, so we need to refer to them
+	// these are the writers that we reference, so we need to refer to them
 	for _, foreignKey := range localTableEditor.referencedTables {
 		if !foreignKey.IsResolved() {
 			continue

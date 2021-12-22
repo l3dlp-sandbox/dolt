@@ -15,10 +15,11 @@
 package writer
 
 import (
+	"context"
+
 	"github.com/dolthub/go-mysql-server/sql"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/doltdb"
-
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/globalstate"
 )
 
@@ -95,7 +96,7 @@ func (tw tableWriter) SetAutoIncrementValue(ctx *sql.Context, val interface{}) (
 	return tw.flush(ctx)
 }
 
-func (tw tableWriter) Table(ctx *sql.Context) (*doltdb.Table, error) {
+func (tw tableWriter) Table(ctx context.Context) (*doltdb.Table, error) {
 	return tw.writer.Table(ctx)
 }
 
