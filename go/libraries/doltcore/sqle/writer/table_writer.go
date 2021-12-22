@@ -17,6 +17,8 @@ package writer
 import (
 	"github.com/dolthub/go-mysql-server/sql"
 
+	"github.com/dolthub/dolt/go/libraries/doltcore/doltdb"
+
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/globalstate"
 )
 
@@ -24,8 +26,8 @@ type tableWriter struct {
 	table    string
 	database string
 
-	validators   []writeDependency
 	dependencies []writeDependency
+	writer       nomsTableWriter
 
 	autoTrack globalstate.AutoIncrementTracker
 	autoSet   sql.AutoIncrementSetter
@@ -39,8 +41,8 @@ type tableWriter struct {
 var _ TableWriter = tableWriter{}
 
 func (tw tableWriter) Insert(ctx *sql.Context, row sql.Row) (err error) {
-	for _, val := range tw.validators {
-		if err = val.Insert(ctx, row); err != nil {
+	for _, dep := range tw.dependencies {
+		if err = dep.ValidateInsert(ctx, row); err != nil {
 			return err
 		}
 	}
@@ -49,12 +51,12 @@ func (tw tableWriter) Insert(ctx *sql.Context, row sql.Row) (err error) {
 			return err
 		}
 	}
-	return
+	return tw.writer.Insert(ctx, row)
 }
 
 func (tw tableWriter) Update(ctx *sql.Context, old, new sql.Row) (err error) {
-	for _, val := range tw.validators {
-		if err = val.Update(ctx, old, new); err != nil {
+	for _, dep := range tw.dependencies {
+		if err = dep.ValidateUpdate(ctx, old, new); err != nil {
 			return err
 		}
 	}
@@ -63,12 +65,12 @@ func (tw tableWriter) Update(ctx *sql.Context, old, new sql.Row) (err error) {
 			return err
 		}
 	}
-	return
+	return tw.writer.Update(ctx, old, new)
 }
 
 func (tw tableWriter) Delete(ctx *sql.Context, row sql.Row) (err error) {
-	for _, val := range tw.validators {
-		if err = val.Delete(ctx, row); err != nil {
+	for _, dep := range tw.dependencies {
+		if err = dep.ValidateDelete(ctx, row); err != nil {
 			return err
 		}
 	}
@@ -77,44 +79,7 @@ func (tw tableWriter) Delete(ctx *sql.Context, row sql.Row) (err error) {
 			return err
 		}
 	}
-	return
-}
-
-func (tw tableWriter) StatementBegin(ctx *sql.Context) {
-	for _, val := range tw.validators {
-		val.StatementBegin(ctx)
-	}
-	for _, dep := range tw.dependencies {
-		dep.StatementBegin(ctx)
-	}
-}
-
-func (tw tableWriter) DiscardChanges(ctx *sql.Context, errorEncountered error) (err error) {
-	for _, val := range tw.validators {
-		if err = val.StatementComplete(ctx); err != nil {
-			return err
-		}
-	}
-	for _, dep := range tw.dependencies {
-		if err = dep.StatementComplete(ctx); err != nil {
-			return err
-		}
-	}
-	return
-}
-
-func (tw tableWriter) StatementComplete(ctx *sql.Context) (err error) {
-	for _, val := range tw.validators {
-		if err = val.StatementComplete(ctx); err != nil {
-			return err
-		}
-	}
-	for _, dep := range tw.dependencies {
-		if err = dep.StatementComplete(ctx); err != nil {
-			return err
-		}
-	}
-	return err
+	return tw.writer.Delete(ctx, row)
 }
 
 func (tw tableWriter) NextAutoIncrementValue(potentialVal, tableVal interface{}) (interface{}, error) {
@@ -130,12 +95,11 @@ func (tw tableWriter) SetAutoIncrementValue(ctx *sql.Context, val interface{}) (
 	return tw.flush(ctx)
 }
 
+func (tw tableWriter) Table(ctx *sql.Context) (*doltdb.Table, error) {
+	return tw.writer.Table(ctx)
+}
+
 func (tw tableWriter) Close(ctx *sql.Context) (err error) {
-	for _, val := range tw.validators {
-		if err = val.Close(ctx); err != nil {
-			return err
-		}
-	}
 	for _, dep := range tw.dependencies {
 		if err = dep.Close(ctx); err != nil {
 			return err
@@ -157,4 +121,30 @@ func (tw tableWriter) flush(ctx *sql.Context) error {
 	}
 
 	return tw.setter(ctx, tw.database, newRoot)
+}
+
+// todo(andy): the following functions are deprecated
+
+func (tw tableWriter) StatementBegin(ctx *sql.Context) {
+	for _, dep := range tw.dependencies {
+		dep.StatementBegin(ctx)
+	}
+}
+
+func (tw tableWriter) DiscardChanges(ctx *sql.Context, errorEncountered error) (err error) {
+	for _, dep := range tw.dependencies {
+		if err = dep.StatementComplete(ctx); err != nil {
+			return err
+		}
+	}
+	return
+}
+
+func (tw tableWriter) StatementComplete(ctx *sql.Context) (err error) {
+	for _, dep := range tw.dependencies {
+		if err = dep.StatementComplete(ctx); err != nil {
+			return err
+		}
+	}
+	return err
 }

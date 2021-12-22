@@ -26,20 +26,26 @@ type writeDependency interface {
 	sql.RowUpdater
 	sql.RowInserter
 	sql.RowDeleter
+
+	ValidateInsert(ctx *sql.Context, row sql.Row) error
+	ValidateUpdate(ctx *sql.Context, old, new sql.Row) error
+	ValidateDelete(ctx *sql.Context, row sql.Row) error
 }
 
-type primaryKeyValidator struct {
+// primaryKey enforces Primary Key constraints.
+// todo(andy): it should also maintain the PK index
+type primaryKey struct {
 	idx index.DoltIndex
 	sch sql.Schema
 }
 
-var _ writeDependency = primaryKeyValidator{}
+var _ writeDependency = primaryKey{}
 
 func primaryKeyValidatorForTable(ctx *sql.Context, tbl *doltdb.Table) (writeDependency, error) {
 	return nil, nil
 }
 
-func (pk primaryKeyValidator) Insert(ctx *sql.Context, row sql.Row) error {
+func (pk primaryKey) ValidateInsert(ctx *sql.Context, row sql.Row) error {
 	lookup, err := pk.pkIndexLookup(ctx, row)
 	if err != nil {
 		return err
@@ -61,32 +67,32 @@ func (pk primaryKeyValidator) Insert(ctx *sql.Context, row sql.Row) error {
 	return nil
 }
 
-func (pk primaryKeyValidator) Update(ctx *sql.Context, old, new sql.Row) (err error) {
-	// assumes |old| and |new| have the same pk
-	return
+func (pk primaryKey) Insert(ctx *sql.Context, row sql.Row) error {
+	return nil
 }
 
-func (pk primaryKeyValidator) Delete(ctx *sql.Context, row sql.Row) (err error) {
-	return
+func (pk primaryKey) ValidateUpdate(ctx *sql.Context, old, new sql.Row) error {
+	// assumes |old| and |new| have the same pk nil
+	return nil
 }
 
-func (pk primaryKeyValidator) StatementBegin(ctx *sql.Context) {
-	return
+func (pk primaryKey) Update(ctx *sql.Context, old, new sql.Row) error {
+	return nil
 }
 
-func (pk primaryKeyValidator) DiscardChanges(ctx *sql.Context, errorEncountered error) (err error) {
-	return
+func (pk primaryKey) ValidateDelete(ctx *sql.Context, row sql.Row) error {
+	return nil
 }
 
-func (pk primaryKeyValidator) StatementComplete(ctx *sql.Context) (err error) {
-	return
+func (pk primaryKey) Delete(ctx *sql.Context, row sql.Row) error {
+	return nil
 }
 
-func (pk primaryKeyValidator) Close(ctx *sql.Context) (err error) {
-	return
+func (pk primaryKey) Close(ctx *sql.Context) error {
+	return nil
 }
 
-func (pk primaryKeyValidator) pkIndexLookup(ctx *sql.Context, row sql.Row) (sql.IndexLookup, error) {
+func (pk primaryKey) pkIndexLookup(ctx *sql.Context, row sql.Row) (sql.IndexLookup, error) {
 	builder := sql.NewIndexBuilder(ctx, pk.idx)
 
 	for i, col := range pk.sch {
@@ -97,4 +103,18 @@ func (pk primaryKeyValidator) pkIndexLookup(ctx *sql.Context, row sql.Row) (sql.
 	}
 
 	return builder.Build(ctx)
+}
+
+// todo(andy): the following functions are deprecated
+
+func (pk primaryKey) StatementBegin(ctx *sql.Context) {
+	return
+}
+
+func (pk primaryKey) DiscardChanges(ctx *sql.Context, errorEncountered error) error {
+	return nil
+}
+
+func (pk primaryKey) StatementComplete(ctx *sql.Context) error {
+	return nil
 }

@@ -21,19 +21,21 @@ import (
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/index"
 )
 
-type uniqueKeyValidator struct {
+// uniqueKey enforces Unique Key constraints.
+// todo(andy): it should also maintain the index
+type uniqueKey struct {
 	index    index.DoltIndex
 	indexSch sql.Schema
 	indexMap columnMapping
 }
 
-var _ writeDependency = uniqueKeyValidator{}
+var _ writeDependency = uniqueKey{}
 
 func uniqueKeyValidatorForTable(ctx *sql.Context, tbl *doltdb.Table) (writeDependency, error) {
 	return nil, nil
 }
 
-func (uk uniqueKeyValidator) Insert(ctx *sql.Context, row sql.Row) error {
+func (uk uniqueKey) ValidateInsert(ctx *sql.Context, row sql.Row) error {
 	if containsNulls(uk.indexMap, row) {
 		return nil
 	}
@@ -59,7 +61,11 @@ func (uk uniqueKeyValidator) Insert(ctx *sql.Context, row sql.Row) error {
 	return nil
 }
 
-func (uk uniqueKeyValidator) Update(ctx *sql.Context, old, new sql.Row) error {
+func (uk uniqueKey) Insert(ctx *sql.Context, row sql.Row) error {
+	return nil
+}
+
+func (uk uniqueKey) ValidateUpdate(ctx *sql.Context, old, new sql.Row) error {
 	ok, err := uk.uniqueColumnsUnchanged(old, new)
 	if err != nil {
 		return err
@@ -71,31 +77,27 @@ func (uk uniqueKeyValidator) Update(ctx *sql.Context, old, new sql.Row) error {
 	return uk.Insert(ctx, new)
 }
 
-func (uk uniqueKeyValidator) Delete(ctx *sql.Context, row sql.Row) (err error) {
+func (uk uniqueKey) Update(ctx *sql.Context, old, new sql.Row) error {
+	return nil
+}
+
+func (uk uniqueKey) ValidateDelete(ctx *sql.Context, row sql.Row) error {
+	return nil
+}
+
+func (uk uniqueKey) Delete(ctx *sql.Context, row sql.Row) error {
+	return nil
+}
+
+func (uk uniqueKey) Close(ctx *sql.Context) (err error) {
 	return
 }
 
-func (uk uniqueKeyValidator) StatementBegin(ctx *sql.Context) {
-	return
-}
-
-func (uk uniqueKeyValidator) DiscardChanges(ctx *sql.Context, errorEncountered error) (err error) {
-	return
-}
-
-func (uk uniqueKeyValidator) StatementComplete(ctx *sql.Context) (err error) {
-	return
-}
-
-func (uk uniqueKeyValidator) Close(ctx *sql.Context) (err error) {
-	return
-}
-
-func (uk uniqueKeyValidator) uniqueColumnsUnchanged(old, new sql.Row) (bool, error) {
+func (uk uniqueKey) uniqueColumnsUnchanged(old, new sql.Row) (bool, error) {
 	return indexColumnsUnchanged(uk.indexSch, uk.indexMap, old, new)
 }
 
-func (uk uniqueKeyValidator) uniqueIndexLookup(ctx *sql.Context, row sql.Row) (sql.IndexLookup, error) {
+func (uk uniqueKey) uniqueIndexLookup(ctx *sql.Context, row sql.Row) (sql.IndexLookup, error) {
 	builder := sql.NewIndexBuilder(ctx, uk.index)
 
 	for i, j := range uk.indexMap {
@@ -129,4 +131,18 @@ func containsNulls(mapping columnMapping, row sql.Row) bool {
 		}
 	}
 	return false
+}
+
+// todo(andy): the following functions are deprecated
+
+func (uk uniqueKey) StatementBegin(ctx *sql.Context) {
+	return
+}
+
+func (uk uniqueKey) DiscardChanges(ctx *sql.Context, errorEncountered error) (err error) {
+	return
+}
+
+func (uk uniqueKey) StatementComplete(ctx *sql.Context) (err error) {
+	return
 }

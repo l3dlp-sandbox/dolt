@@ -17,6 +17,8 @@ package writer
 import (
 	"github.com/dolthub/go-mysql-server/sql"
 
+	"github.com/dolthub/dolt/go/libraries/doltcore/doltdb"
+
 	"github.com/dolthub/dolt/go/libraries/doltcore/schema"
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/index"
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/sqlutil"
@@ -34,7 +36,6 @@ type nomsTableWriter struct {
 	tableEditor editor.TableEditor
 }
 
-var _ writeDependency = &nomsTableWriter{}
 var _ sql.AutoIncrementSetter = &nomsTableWriter{}
 
 func (te *nomsTableWriter) Insert(ctx *sql.Context, sqlRow sql.Row) error {
@@ -141,6 +142,10 @@ func (te *nomsTableWriter) DiscardChanges(ctx *sql.Context, errorEncountered err
 // StatementComplete implements the interface sql.TableEditor.
 func (te *nomsTableWriter) StatementComplete(ctx *sql.Context) error {
 	return te.tableEditor.StatementFinished(ctx, false)
+}
+
+func (te *nomsTableWriter) Table(ctx *sql.Context) (*doltdb.Table, error) {
+	return te.tableEditor.Table(ctx)
 }
 
 // Close implements Closer

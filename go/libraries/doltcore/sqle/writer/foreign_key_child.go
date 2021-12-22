@@ -27,11 +27,9 @@ import (
 // table schema column.
 type columnMapping []int
 
-// fkChildValidator is a write-validator for tables with FOREIGN KEY
-// constraints (ie "child" tables). Before new rows are added to a
-// child table, it performs an index lookup on the parent table to
-// validate that a corresponding row exists.
-type fkChildValidator struct {
+// foreignKeyParent enforces the child side of a Foreign Key
+// constraint. It does not maintain the Foreign Key index.
+type foreignKeyChild struct {
 	fk          doltdb.ForeignKey
 	parentIndex index.DoltIndex
 	indexSch    sql.Schema
@@ -40,13 +38,13 @@ type fkChildValidator struct {
 	childMap columnMapping
 }
 
-var _ writeDependency = fkChildValidator{}
+var _ writeDependency = foreignKeyChild{}
 
 func makeChildValidator(ctx *sql.Context, root *doltdb.RootValue, fk doltdb.ForeignKey) (writeDependency, error) {
 	return nil, nil
 }
 
-func (v fkChildValidator) Insert(ctx *sql.Context, row sql.Row) error {
+func (v foreignKeyChild) ValidateInsert(ctx *sql.Context, row sql.Row) error {
 	if containsNulls(v.childMap, row) {
 		return nil
 	}
@@ -66,15 +64,16 @@ func (v fkChildValidator) Insert(ctx *sql.Context, row sql.Row) error {
 		return err
 	}
 	if len(rows) > 0 {
-		// todo(andy): incorrect string for key
-		s := sql.FormatRow(row)
-		return sql.ErrForeignKeyChildViolation.New(v.fk.Name, v.fk.TableName, v.fk.ReferencedTableName, s)
+		return v.violationErr(row)
 	}
 
 	return nil
 }
+func (v foreignKeyChild) Insert(ctx *sql.Context, row sql.Row) error {
+	return nil
+}
 
-func (v fkChildValidator) Update(ctx *sql.Context, old, new sql.Row) error {
+func (v foreignKeyChild) ValidateUpdate(ctx *sql.Context, old, new sql.Row) error {
 	ok, err := v.childColumnsUnchanged(old, new)
 	if err != nil {
 		return err
@@ -86,32 +85,28 @@ func (v fkChildValidator) Update(ctx *sql.Context, old, new sql.Row) error {
 	return v.Insert(ctx, new)
 }
 
-func (v fkChildValidator) Delete(ctx *sql.Context, row sql.Row) (err error) {
-	return
+func (v foreignKeyChild) Update(ctx *sql.Context, old, new sql.Row) error {
+	return nil
 }
 
-func (v fkChildValidator) StatementBegin(ctx *sql.Context) {
-	return
+func (v foreignKeyChild) ValidateDelete(ctx *sql.Context, row sql.Row) error {
+	return nil
 }
 
-func (v fkChildValidator) DiscardChanges(ctx *sql.Context, errorEncountered error) (err error) {
-	return
+func (v foreignKeyChild) Delete(ctx *sql.Context, row sql.Row) error {
+	return nil
 }
 
-func (v fkChildValidator) StatementComplete(ctx *sql.Context) (err error) {
-	return
-}
-
-func (v fkChildValidator) Close(ctx *sql.Context) (err error) {
-	return
+func (v foreignKeyChild) Close(ctx *sql.Context) error {
+	return nil
 }
 
 // childColumnsUnchanged returns true if the fields indexed by the foreign key are unchanged.
-func (v fkChildValidator) childColumnsUnchanged(old, new sql.Row) (bool, error) {
+func (v foreignKeyChild) childColumnsUnchanged(old, new sql.Row) (bool, error) {
 	return indexColumnsUnchanged(v.indexSch, v.childMap, old, new)
 }
 
-func (v fkChildValidator) parentIndexLookup(ctx *sql.Context, row sql.Row) (sql.IndexLookup, error) {
+func (v foreignKeyChild) parentIndexLookup(ctx *sql.Context, row sql.Row) (sql.IndexLookup, error) {
 	builder := sql.NewIndexBuilder(ctx, v.parentIndex)
 
 	for i, j := range v.childMap {
@@ -121,4 +116,24 @@ func (v fkChildValidator) parentIndexLookup(ctx *sql.Context, row sql.Row) (sql.
 	}
 
 	return builder.Build(ctx)
+}
+
+func (v foreignKeyChild) violationErr(row sql.Row) error {
+	// todo(andy): incorrect string for key
+	s := sql.FormatRow(row)
+	return sql.ErrForeignKeyChildViolation.New(v.fk.Name, v.fk.TableName, v.fk.ReferencedTableName, s)
+}
+
+// todo(andy): the following functions are deprecated
+
+func (v foreignKeyChild) StatementBegin(ctx *sql.Context) {
+	return
+}
+
+func (v foreignKeyChild) DiscardChanges(ctx *sql.Context, errorEncountered error) error {
+	return nil
+}
+
+func (v foreignKeyChild) StatementComplete(ctx *sql.Context) error {
+	return nil
 }
