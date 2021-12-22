@@ -23,6 +23,18 @@ import (
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/globalstate"
 )
 
+type TableWriter interface {
+	sql.RowReplacer
+	sql.RowUpdater
+	sql.RowInserter
+	sql.RowDeleter
+	sql.AutoIncrementSetter
+
+	NextAutoIncrementValue(potentialVal, tableVal interface{}) (interface{}, error)
+}
+
+type SessionRootSetter func(ctx *sql.Context, dbName string, root *doltdb.RootValue) error
+
 type tableWriter struct {
 	table    string
 	database string

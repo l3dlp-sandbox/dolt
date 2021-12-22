@@ -195,5 +195,17 @@ func (te nomsTableWriter) resolveFks(ctx *sql.Context) error {
 }
 
 func (te nomsTableWriter) duplicateKeyErrFunc(keyString, indexName string, k, v types.Tuple, isPk bool) error {
-	panic("unimplemented")
+	panic("unreachable primary key error")
+}
+
+func autoIncrementColFromSchema(sch schema.Schema) schema.Column {
+	var autoCol schema.Column
+	_ = sch.GetAllCols().Iter(func(tag uint64, col schema.Column) (stop bool, err error) {
+		if col.AutoIncrement {
+			autoCol = col
+			stop = true
+		}
+		return
+	})
+	return autoCol
 }

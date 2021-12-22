@@ -27,6 +27,15 @@ import (
 	"github.com/dolthub/dolt/go/libraries/doltcore/table/editor"
 )
 
+type WriteSession interface {
+	GetTableWriter(ctx context.Context, table, db string, ait globalstate.AutoIncrementTracker, setter SessionRootSetter, batched bool) (TableWriter, error)
+	UpdateRoot(ctx context.Context, cb func(ctx context.Context, current *doltdb.RootValue) (*doltdb.RootValue, error)) error
+	Flush(ctx context.Context) (*doltdb.RootValue, error)
+
+	GetOptions() editor.Options
+	SetOptions(opts editor.Options)
+}
+
 type writeSession struct {
 	writers map[string]tableWriter
 	root    *doltdb.RootValue
@@ -228,5 +237,5 @@ func (ws *writeSession) getConstraintsForTable(ctx context.Context, tbl *doltdb.
 		deps = append(deps, dep)
 	}
 
-	return nil, nil
+	return deps, nil
 }
