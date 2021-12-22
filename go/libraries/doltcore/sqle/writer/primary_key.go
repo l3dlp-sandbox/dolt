@@ -21,10 +21,16 @@ import (
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/index"
 )
 
+type writeDependency interface {
+	sql.RowReplacer
+	sql.RowUpdater
+	sql.RowInserter
+	sql.RowDeleter
+}
+
 type primaryKeyValidator struct {
-	parent sql.Table
-	idx    index.DoltIndex
-	fk     doltdb.ForeignKey
+	idx index.DoltIndex
+	sch sql.Schema
 }
 
 var _ writeDependency = primaryKeyValidator{}
@@ -34,29 +40,61 @@ func primaryKeyValidatorForTable(ctx *sql.Context, tbl *doltdb.Table) (writeDepe
 }
 
 func (pk primaryKeyValidator) Insert(ctx *sql.Context, row sql.Row) error {
-	panic("unimplemented")
+	lookup, err := pk.pkIndexLookup(ctx, row)
+	if err != nil {
+		return err
+	}
+
+	iter, err := index.RowIterForIndexLookup(ctx, lookup)
+	if err != nil {
+		return err
+	}
+
+	rows, err := sql.RowIterToRows(ctx, iter)
+	if err != nil {
+		return err
+	}
+	if len(rows) > 0 {
+		return sql.NewUniqueKeyErr(sql.FormatRow(row), true, rows[0])
+	}
+
+	return nil
 }
 
-func (pk primaryKeyValidator) Update(ctx *sql.Context, old, new sql.Row) error {
-	panic("unimplemented")
+func (pk primaryKeyValidator) Update(ctx *sql.Context, old, new sql.Row) (err error) {
+	// assumes |old| and |new| have the same pk
+	return
 }
 
-func (pk primaryKeyValidator) Delete(ctx *sql.Context, row sql.Row) error {
-	panic("unimplemented")
+func (pk primaryKeyValidator) Delete(ctx *sql.Context, row sql.Row) (err error) {
+	return
 }
 
 func (pk primaryKeyValidator) StatementBegin(ctx *sql.Context) {
-	panic("unimplemented")
+	return
 }
 
-func (pk primaryKeyValidator) DiscardChanges(ctx *sql.Context, errorEncountered error) error {
-	panic("unimplemented")
+func (pk primaryKeyValidator) DiscardChanges(ctx *sql.Context, errorEncountered error) (err error) {
+	return
 }
 
-func (pk primaryKeyValidator) StatementComplete(ctx *sql.Context) error {
-	panic("unimplemented")
+func (pk primaryKeyValidator) StatementComplete(ctx *sql.Context) (err error) {
+	return
 }
 
-func (pk primaryKeyValidator) Close(ctx *sql.Context) error {
-	panic("unimplemented")
+func (pk primaryKeyValidator) Close(ctx *sql.Context) (err error) {
+	return
+}
+
+func (pk primaryKeyValidator) pkIndexLookup(ctx *sql.Context, row sql.Row) (sql.IndexLookup, error) {
+	builder := sql.NewIndexBuilder(ctx, pk.idx)
+
+	for i, col := range pk.sch {
+		if col.PrimaryKey {
+			expr := col.Source + "." + col.Name
+			builder.Equals(ctx, expr, row[i])
+		}
+	}
+
+	return builder.Build(ctx)
 }
