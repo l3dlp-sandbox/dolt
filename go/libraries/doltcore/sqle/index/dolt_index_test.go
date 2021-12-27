@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/dolthub/go-mysql-server/sql"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/dtestutils"
@@ -1251,6 +1252,9 @@ func requireUnorderedRowsEqual(t *testing.T, rows1, rows2 []sql.Row) {
 }
 
 func testDoltIndex(t *testing.T, keys []interface{}, expectedRows []sql.Row, idx sql.Index, cmp indexComp) {
+	d := idx.(index.DoltIndex).IndexRowData()
+	fmt.Println(d)
+
 	ctx := NewTestSQLCtx(context.Background())
 	exprs := idx.Expressions()
 	builder := sql.NewIndexBuilder(sql.NewEmptyContext(), idx)
@@ -1279,8 +1283,12 @@ func testDoltIndex(t *testing.T, keys []interface{}, expectedRows []sql.Row, idx
 	require.NoError(t, err)
 
 	var readRows []sql.Row
-	var nextRow sql.Row
-	for nextRow, err = indexIter.Next(ctx); err == nil; nextRow, err = indexIter.Next(ctx) {
+	for {
+		nextRow, err := indexIter.Next(ctx)
+		if err == io.EOF {
+			break
+		}
+		assert.NoError(t, err)
 		readRows = append(readRows, nextRow)
 	}
 	require.Equal(t, io.EOF, err)
