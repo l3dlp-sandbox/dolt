@@ -17,6 +17,8 @@ package writer
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 
 	"golang.org/x/sync/errgroup"
@@ -25,6 +27,7 @@ import (
 	"github.com/dolthub/dolt/go/libraries/doltcore/schema"
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/globalstate"
 	"github.com/dolthub/dolt/go/libraries/doltcore/table/editor"
+	"github.com/dolthub/dolt/go/store/types"
 )
 
 type WriteSession interface {
@@ -141,7 +144,9 @@ func (ws *writeSession) flush(ctx context.Context) (*doltdb.RootValue, error) {
 	mut := &sync.Mutex{}
 
 	eg, ctx := errgroup.WithContext(ctx)
-	for name, writer := range ws.writers {
+	for n := range ws.writers {
+
+		tableName, writer := n, ws.writers[n]
 		eg.Go(func() error {
 			t, err := writer.Table(ctx)
 			if err != nil {
@@ -150,7 +155,7 @@ func (ws *writeSession) flush(ctx context.Context) (*doltdb.RootValue, error) {
 
 			mut.Lock()
 			defer mut.Unlock()
-			flushed[name] = t
+			flushed[tableName] = t
 
 			return nil
 		})
@@ -162,15 +167,14 @@ func (ws *writeSession) flush(ctx context.Context) (*doltdb.RootValue, error) {
 	}
 
 	// todo(andy): update tables in unison
-	root := ws.root
 	for name, table := range flushed {
-		root, err = root.PutTable(ctx, name, table)
+		ws.root, err = ws.root.PutTable(ctx, name, table)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	return root, nil
+	return ws.root, nil
 }
 
 func (ws *writeSession) setRoot(ctx context.Context, root *doltdb.RootValue) error {
@@ -238,4 +242,51 @@ func (ws *writeSession) getConstraintsForTable(ctx context.Context, tbl *doltdb.
 	}
 
 	return deps, nil
+}
+
+// todo(andy): cleanup
+func debugIndexes(r *doltdb.RootValue) string {
+	if r == nil {
+		return ""
+	}
+
+	ctx := context.Background()
+	sb := strings.Builder{}
+
+	_ = r.IterTables(ctx, func(name string, table *doltdb.Table, sch schema.Schema) (stop bool, err error) {
+		sb.WriteString("table: ")
+		sb.WriteString(name)
+		sb.WriteRune('\n')
+
+		pk, _ := table.GetRowData(ctx)
+		if pk.Len() > 0 {
+			sz := strconv.Itoa(int(pk.Len()))
+			sb.WriteRune('\t')
+			sb.WriteString("primary: ")
+			sb.WriteString(sz)
+			sb.WriteRune('\n')
+		}
+
+		id, _ := table.GetIndexData(ctx)
+		_ = id.Iter(ctx, func(key, value types.Value) (stop bool, err error) {
+			idx, _ := value.(types.Ref).TargetValue(ctx, table.ValueReadWriter())
+			idxName := string(key.(types.String))
+			l := int(idx.(types.Map).Len())
+
+			if l > 0 {
+				sz := strconv.Itoa(l)
+				sb.WriteRune('\t')
+				sb.WriteString(idxName)
+				sb.WriteString(": ")
+				sb.WriteString(sz)
+				sb.WriteRune('\n')
+			}
+
+			return false, nil
+		})
+
+		return false, nil
+	})
+
+	return sb.String()
 }

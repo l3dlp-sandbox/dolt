@@ -1284,12 +1284,13 @@ func testDoltIndex(t *testing.T, keys []interface{}, expectedRows []sql.Row, idx
 
 	var readRows []sql.Row
 	for {
-		nextRow, err := indexIter.Next(ctx)
+		var r sql.Row
+		r, err = indexIter.Next(ctx)
 		if err == io.EOF {
 			break
 		}
 		assert.NoError(t, err)
-		readRows = append(readRows, nextRow)
+		readRows = append(readRows, r)
 	}
 	require.Equal(t, io.EOF, err)
 
@@ -1303,7 +1304,8 @@ func doltIndexSetup(t *testing.T) map[string]index.DoltIndex {
 	if err != nil {
 		panic(err)
 	}
-	root, err = sqle.ExecuteSql(t, dEnv, root, `
+
+	createTableSql := `
 CREATE TABLE onepk (
   pk1 BIGINT PRIMARY KEY,
   v1 BIGINT,
@@ -1327,7 +1329,8 @@ CREATE TABLE types (
   v7 TIME,
   v8 VARCHAR(2),
   v9 YEAR
-);
+);`
+	createIndexSql := `
 CREATE INDEX idx_v1 ON onepk(v1);
 CREATE INDEX idx_v2v1 ON twopk(v2, v1);
 CREATE INDEX idx_bit ON types(v1);
@@ -1338,15 +1341,21 @@ CREATE INDEX idx_double ON types(v5);
 CREATE INDEX idx_set ON types(v6);
 CREATE INDEX idx_time ON types(v7);
 CREATE INDEX idx_varchar ON types(v8);
-CREATE INDEX idx_year ON types(v9);
-INSERT INTO onepk VALUES (1, 1, 1), (2, 1, 2), (3, 3, 3), (4, 4, 3);
-INSERT INTO twopk VALUES (1, 1, 3, 3), (1, 2, 3, 4), (2, 1, 4, 4), (2, 2, 4, 3);
+CREATE INDEX idx_year ON types(v9);`
+	insertRowsSql := `
 INSERT INTO types VALUES (-3, 1, '2020-05-14 12:00:00', -3.3, 'a', -3.3, 'a', '-00:03:03', 'a', 1980);
 INSERT INTO types VALUES (3, 5, '2020-05-14 12:00:04', 3.3, 'e', 3.3, 'b,c', '00:03:03', 'e', 2020);
 INSERT INTO types VALUES (0, 3, '2020-05-14 12:00:02', 0.0, 'c', 0.0, 'c', '00:00:00', 'c', 2000);
 INSERT INTO types VALUES (-1, 2, '2020-05-14 12:00:01', -1.1, 'b', -1.1, 'a,b', '-00:01:01', 'b', 1990);
 INSERT INTO types VALUES (1, 4, '2020-05-14 12:00:03', 1.1, 'd', 1.1, 'a,c', '00:01:01', 'd', 2010);
-`)
+INSERT INTO twopk VALUES (1, 1, 3, 3), (1, 2, 3, 4), (2, 1, 4, 4), (2, 2, 4, 3);
+INSERT INTO onepk VALUES (1, 1, 1), (2, 1, 2), (3, 3, 3), (4, 4, 3);`
+
+	root, err = sqle.ExecuteSql(t, dEnv, root, createTableSql)
+	require.NoError(t, err)
+	root, err = sqle.ExecuteSql(t, dEnv, root, createIndexSql)
+	require.NoError(t, err)
+	root, err = sqle.ExecuteSql(t, dEnv, root, insertRowsSql)
 	require.NoError(t, err)
 
 	indexMap := make(map[string]index.DoltIndex)
@@ -1361,7 +1370,9 @@ INSERT INTO types VALUES (1, 4, '2020-05-14 12:00:03', 1.1, 'd', 1.1, 'a,c', '00
 		require.NoError(t, err)
 
 		pkName := name + ":" + "primaryKey"
-		indexMap[pkName] = indexes[0].(index.DoltIndex)
+		idx := indexes[0].(index.DoltIndex)
+		require.True(t, idx.IndexRowData().Len() > 0)
+		indexMap[pkName] = idx
 
 		for _, idx := range indexes[1:] {
 			idxName := name + ":" + idx.ID()
