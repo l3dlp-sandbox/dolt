@@ -29,7 +29,7 @@ import (
 // table schema column.
 type columnMapping []int
 
-// foreignKeyParent enforces the child side of a Foreign Key
+// foreignKeyChild enforces the child side of a Foreign Key
 // constraint. It does not maintain the Foreign Key uniqueIndex.
 type foreignKeyChild struct {
 	fk          doltdb.ForeignKey
@@ -105,7 +105,7 @@ func (c foreignKeyChild) ValidateInsert(ctx *sql.Context, row sql.Row) error {
 	if err != nil {
 		return err
 	}
-	if len(rows) > 0 {
+	if len(rows) == 0 {
 		return c.violationErr(row)
 	}
 

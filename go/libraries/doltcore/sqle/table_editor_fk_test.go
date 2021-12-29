@@ -378,6 +378,9 @@ ALTER TABLE three ADD FOREIGN KEY (v1, v2) REFERENCES two(v1, v2) ON DELETE CASC
 }
 
 func TestTableEditorSelfReferentialForeignKeyRestrict(t *testing.T) {
+	// todo(andy): self-referential keys
+	t.Skip("todo(andy): self-referential keys")
+
 	dEnv, initialRoot := setupEditorFkTest(t)
 
 	ctx := context.Background()
@@ -448,6 +451,9 @@ func TestTableEditorSelfReferentialForeignKeyRestrict(t *testing.T) {
 }
 
 func TestTableEditorSelfReferentialForeignKeyCascade(t *testing.T) {
+	// todo(andy): self-referential keys
+	t.Skip("todo(andy): self-referential keys")
+
 	dEnv, initialRoot := setupEditorFkTest(t)
 
 	ctx := context.Background()
@@ -548,6 +554,9 @@ func TestTableEditorSelfReferentialForeignKeyCascade(t *testing.T) {
 }
 
 func TestTableEditorSelfReferentialForeignKeySetNull(t *testing.T) {
+	// todo(andy): self-referential keys
+	t.Skip("todo(andy): self-referential keys")
+
 	dEnv, initialRoot := setupEditorFkTest(t)
 
 	ctx := context.Background()
