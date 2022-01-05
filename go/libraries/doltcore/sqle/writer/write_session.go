@@ -35,9 +35,9 @@ type WriteSession interface {
 	SetOptions(opts editor.Options)
 }
 
-// tableEditSession handles all edit operations on a table that may also update other tables. Serves as coordination
+// nomsWriteSession handles all edit operations on a table that may also update other tables. Serves as coordination
 // for SessionedTableEditors.
-type tableEditSession struct {
+type nomsWriteSession struct {
 	opts editor.Options
 
 	root       *doltdb.RootValue
@@ -45,13 +45,13 @@ type tableEditSession struct {
 	writeMutex *sync.RWMutex // This mutex is specifically for changes that affect the TES or all STEs
 }
 
-var _ WriteSession = &tableEditSession{}
+var _ WriteSession = &nomsWriteSession{}
 
-// CreateTableEditSession creates and returns a tableEditSession. Inserting a nil root is not an error, as there are
+// CreateTableEditSession creates and returns a nomsWriteSession. Inserting a nil root is not an error, as there are
 // locations that do not have a root at the time of this call. However, a root must be set through SetRoot before any
 // table editors are returned.
 func CreateTableEditSession(root *doltdb.RootValue, opts editor.Options) WriteSession {
-	return &tableEditSession{
+	return &nomsWriteSession{
 		opts:       opts,
 		root:       root,
 		tables:     make(map[string]*sessionedTableEditor),
@@ -59,7 +59,7 @@ func CreateTableEditSession(root *doltdb.RootValue, opts editor.Options) WriteSe
 	}
 }
 
-func (tes *tableEditSession) GetTableWriter(ctx context.Context, table string, database string, ait globalstate.AutoIncrementTracker, setter SessionRootSetter, batched bool) (TableWriter, error) {
+func (tes *nomsWriteSession) GetTableWriter(ctx context.Context, table string, database string, ait globalstate.AutoIncrementTracker, setter SessionRootSetter, batched bool) (TableWriter, error) {
 	tes.writeMutex.Lock()
 	defer tes.writeMutex.Unlock()
 
@@ -84,7 +84,7 @@ func (tes *tableEditSession) GetTableWriter(ctx context.Context, table string, d
 	conv := index.NewKVToSqlRowConverterForCols(t.Format(), sch)
 	ac := autoIncrementColFromSchema(sch)
 
-	return &sqlTableWriter{
+	return &nomsTableWriter{
 		tableName:   table,
 		dbName:      database,
 		sch:         sch,
@@ -100,7 +100,7 @@ func (tes *tableEditSession) GetTableWriter(ctx context.Context, table string, d
 }
 
 // Flush returns an updated root with all of the changed tables.
-func (tes *tableEditSession) Flush(ctx context.Context) (*doltdb.RootValue, error) {
+func (tes *nomsWriteSession) Flush(ctx context.Context) (*doltdb.RootValue, error) {
 	tes.writeMutex.Lock()
 	defer tes.writeMutex.Unlock()
 
@@ -112,7 +112,7 @@ func (tes *tableEditSession) Flush(ctx context.Context) (*doltdb.RootValue, erro
 // removed table's editors are used after this, then the behavior is undefined. This will lose any changes that have not
 // been flushed. If the purpose is to add a new table, foreign key, etc. (using Flush followed up with SetRoot), then
 // use UpdateRoot. Calling the two functions manually for the purposes of root modification may lead to race conditions.
-func (tes *tableEditSession) SetRoot(ctx context.Context, root *doltdb.RootValue) error {
+func (tes *nomsWriteSession) SetRoot(ctx context.Context, root *doltdb.RootValue) error {
 	tes.writeMutex.Lock()
 	defer tes.writeMutex.Unlock()
 
@@ -121,8 +121,8 @@ func (tes *tableEditSession) SetRoot(ctx context.Context, root *doltdb.RootValue
 
 // UpdateRoot takes in a function meant to update the root (whether that be updating a table's schema, adding a foreign
 // key, etc.) and passes in the flushed root. The function may then safely modify the root, and return the modified root
-// (assuming no errors). The tableEditSession will update itself in accordance with the newly returned root.
-func (tes *tableEditSession) UpdateRoot(ctx context.Context, cb func(ctx context.Context, current *doltdb.RootValue) (*doltdb.RootValue, error)) error {
+// (assuming no errors). The nomsWriteSession will update itself in accordance with the newly returned root.
+func (tes *nomsWriteSession) UpdateRoot(ctx context.Context, cb func(ctx context.Context, current *doltdb.RootValue) (*doltdb.RootValue, error)) error {
 	tes.writeMutex.Lock()
 	defer tes.writeMutex.Unlock()
 
@@ -139,16 +139,16 @@ func (tes *tableEditSession) UpdateRoot(ctx context.Context, cb func(ctx context
 	return tes.setRoot(ctx, mutated)
 }
 
-func (tes *tableEditSession) GetOptions() editor.Options {
+func (tes *nomsWriteSession) GetOptions() editor.Options {
 	return tes.opts
 }
 
-func (tes *tableEditSession) SetOptions(opts editor.Options) {
+func (tes *nomsWriteSession) SetOptions(opts editor.Options) {
 	tes.opts = opts
 }
 
 // flush is the inner implementation for Flush that does not acquire any locks
-func (tes *tableEditSession) flush(ctx context.Context) (*doltdb.RootValue, error) {
+func (tes *nomsWriteSession) flush(ctx context.Context) (*doltdb.RootValue, error) {
 	rootMutex := &sync.Mutex{}
 	wg := &sync.WaitGroup{}
 	wg.Add(len(tes.tables))
@@ -194,7 +194,7 @@ func (tes *tableEditSession) flush(ctx context.Context) (*doltdb.RootValue, erro
 }
 
 // getTableEditor is the inner implementation for GetTableEditor, allowing recursive calls
-func (tes *tableEditSession) getTableEditor(ctx context.Context, tableName string, tableSch schema.Schema) (*sessionedTableEditor, error) {
+func (tes *nomsWriteSession) getTableEditor(ctx context.Context, tableName string, tableSch schema.Schema) (*sessionedTableEditor, error) {
 	if tes.root == nil {
 		return nil, fmt.Errorf("must call SetRoot before a table editor will be returned")
 	}
@@ -260,7 +260,7 @@ func (tes *tableEditSession) getTableEditor(ctx context.Context, tableName strin
 }
 
 // loadForeignKeys loads all tables mentioned in foreign keys for the given editor
-func (tes *tableEditSession) loadForeignKeys(ctx context.Context, localTableEditor *sessionedTableEditor) error {
+func (tes *nomsWriteSession) loadForeignKeys(ctx context.Context, localTableEditor *sessionedTableEditor) error {
 	// these are the tables that reference us, so we need to update them
 	for _, foreignKey := range localTableEditor.referencingTables {
 		if !foreignKey.IsResolved() {
@@ -285,9 +285,9 @@ func (tes *tableEditSession) loadForeignKeys(ctx context.Context, localTableEdit
 }
 
 // setRoot is the inner implementation for SetRoot that does not acquire any locks
-func (tes *tableEditSession) setRoot(ctx context.Context, root *doltdb.RootValue) error {
+func (tes *nomsWriteSession) setRoot(ctx context.Context, root *doltdb.RootValue) error {
 	if root == nil {
-		return fmt.Errorf("cannot set a tableEditSession's root to nil once it has been created")
+		return fmt.Errorf("cannot set a nomsWriteSession's root to nil once it has been created")
 	}
 
 	fkCollection, err := root.GetForeignKeyCollection(ctx)
