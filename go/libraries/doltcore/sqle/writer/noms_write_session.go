@@ -26,15 +26,6 @@ import (
 	"github.com/dolthub/dolt/go/libraries/doltcore/table/editor"
 )
 
-type WriteSession interface {
-	GetTableWriter(ctx context.Context, table, db string, ait globalstate.AutoIncrementTracker, setter SessionRootSetter, batched bool) (TableWriter, error)
-	UpdateRoot(ctx context.Context, cb func(ctx context.Context, current *doltdb.RootValue) (*doltdb.RootValue, error)) error
-	Flush(ctx context.Context) (*doltdb.RootValue, error)
-
-	GetOptions() editor.Options
-	SetOptions(opts editor.Options)
-}
-
 // nomsWriteSession handles all edit operations on a table that may also update other tables. Serves as coordination
 // for SessionedTableEditors.
 type nomsWriteSession struct {
@@ -46,18 +37,6 @@ type nomsWriteSession struct {
 }
 
 var _ WriteSession = &nomsWriteSession{}
-
-// CreateTableEditSession creates and returns a nomsWriteSession. Inserting a nil root is not an error, as there are
-// locations that do not have a root at the time of this call. However, a root must be set through SetRoot before any
-// table editors are returned.
-func CreateTableEditSession(root *doltdb.RootValue, opts editor.Options) WriteSession {
-	return &nomsWriteSession{
-		opts:       opts,
-		root:       root,
-		tables:     make(map[string]*sessionedTableEditor),
-		writeMutex: &sync.RWMutex{},
-	}
-}
 
 func (tes *nomsWriteSession) GetTableWriter(ctx context.Context, table string, database string, ait globalstate.AutoIncrementTracker, setter SessionRootSetter, batched bool) (TableWriter, error) {
 	tes.writeMutex.Lock()

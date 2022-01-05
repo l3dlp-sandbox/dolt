@@ -30,9 +30,21 @@ import (
 	"github.com/dolthub/dolt/go/store/types"
 )
 
-// nomsTableWriter is a wrapper for *doltdb.SessionedTableEditor that complies with the SQL interface.
+type TableWriter interface {
+	sql.RowReplacer
+	sql.RowUpdater
+	sql.RowInserter
+	sql.RowDeleter
+	sql.AutoIncrementSetter
+
+	NextAutoIncrementValue(potentialVal, tableVal interface{}) (interface{}, error)
+}
+
+type SessionRootSetter func(ctx *sql.Context, dbName string, root *doltdb.RootValue) error
+
+// sqlTableWriter is a wrapper for *doltdb.SessionedTableEditor that complies with the SQL interface.
 //
-// The nomsTableWriter has two levels of batching: one supported at the SQL engine layer where a single UPDATE, DELETE or
+// The sqlTableWriter has two levels of batching: one supported at the SQL engine layer where a single UPDATE, DELETE or
 // INSERT statement will touch many rows, and we want to avoid unnecessary intermediate writes; and one at the dolt
 // layer as a "batch mode" in DoltDatabase. In the latter mode, it's possible to mix inserts, updates and deletes in any
 // order. In general, this is unsafe and will produce incorrect results in many cases. The editor makes reasonable
@@ -40,7 +52,7 @@ import (
 // support REPLACE statements, which are implemented as a DELETE followed by an INSERT. In general, not flushing the
 // editor after every SQL statement is incorrect and will return incorrect results. The single reliable exception is an
 // unbroken chain of INSERT statements, where we have taken pains to batch writes to speed things up.
-type nomsTableWriter struct {
+type sqlTableWriter struct {
 	tableName         string
 	dbName            string
 	sch               schema.Schema
@@ -56,9 +68,9 @@ type nomsTableWriter struct {
 	setter SessionRootSetter
 }
 
-var _ TableWriter = &nomsTableWriter{}
+var _ TableWriter = &sqlTableWriter{}
 
-func (te *nomsTableWriter) duplicateKeyErrFunc(keyString, indexName string, k, v types.Tuple, isPk bool) error {
+func (te *sqlTableWriter) duplicateKeyErrFunc(keyString, indexName string, k, v types.Tuple, isPk bool) error {
 	oldRow, err := te.kvToSQLRow.ConvertKVTuplesToSqlRow(k, v)
 	if err != nil {
 		return err
@@ -67,7 +79,7 @@ func (te *nomsTableWriter) duplicateKeyErrFunc(keyString, indexName string, k, v
 	return sql.NewUniqueKeyErr(keyString, isPk, oldRow)
 }
 
-func (te *nomsTableWriter) Insert(ctx *sql.Context, sqlRow sql.Row) error {
+func (te *sqlTableWriter) Insert(ctx *sql.Context, sqlRow sql.Row) error {
 	if !schema.IsKeyless(te.sch) {
 		k, v, tagToVal, err := sqlutil.DoltKeyValueAndMappingFromSqlRow(ctx, te.vrw, sqlRow, te.sch)
 		if err != nil {
@@ -96,7 +108,7 @@ func (te *nomsTableWriter) Insert(ctx *sql.Context, sqlRow sql.Row) error {
 	return err
 }
 
-func (te *nomsTableWriter) Delete(ctx *sql.Context, sqlRow sql.Row) error {
+func (te *sqlTableWriter) Delete(ctx *sql.Context, sqlRow sql.Row) error {
 	if !schema.IsKeyless(te.sch) {
 		k, tagToVal, err := sqlutil.DoltKeyAndMappingFromSqlRow(ctx, te.vrw, sqlRow, te.sch)
 		if err != nil {
@@ -127,7 +139,7 @@ func (te *nomsTableWriter) Delete(ctx *sql.Context, sqlRow sql.Row) error {
 	}
 }
 
-func (te *nomsTableWriter) Update(ctx *sql.Context, oldRow sql.Row, newRow sql.Row) error {
+func (te *sqlTableWriter) Update(ctx *sql.Context, oldRow sql.Row, newRow sql.Row) error {
 	dOldRow, err := sqlutil.SqlRowToDoltRow(ctx, te.vrw, oldRow, te.sch)
 	if err != nil {
 		return err
@@ -147,16 +159,16 @@ func (te *nomsTableWriter) Update(ctx *sql.Context, oldRow sql.Row, newRow sql.R
 	return err
 }
 
-func (te *nomsTableWriter) NextAutoIncrementValue(potentialVal, tableVal interface{}) (interface{}, error) {
+func (te *sqlTableWriter) NextAutoIncrementValue(potentialVal, tableVal interface{}) (interface{}, error) {
 	return te.aiTracker.Next(te.tableName, potentialVal, tableVal)
 }
 
-func (te *nomsTableWriter) GetAutoIncrementValue() (interface{}, error) {
+func (te *sqlTableWriter) GetAutoIncrementValue() (interface{}, error) {
 	val := te.tableEditor.GetAutoIncrementValue()
 	return te.autoIncCol.TypeInfo.ConvertNomsValueToValue(val)
 }
 
-func (te *nomsTableWriter) SetAutoIncrementValue(ctx *sql.Context, val interface{}) error {
+func (te *sqlTableWriter) SetAutoIncrementValue(ctx *sql.Context, val interface{}) error {
 	nomsVal, err := te.autoIncCol.TypeInfo.ConvertValueToNomsValue(ctx, te.vrw, val)
 	if err != nil {
 		return err
@@ -171,7 +183,7 @@ func (te *nomsTableWriter) SetAutoIncrementValue(ctx *sql.Context, val interface
 }
 
 // Close implements Closer
-func (te *nomsTableWriter) Close(ctx *sql.Context) error {
+func (te *sqlTableWriter) Close(ctx *sql.Context) error {
 	// If we're running in batched mode, don't flush the edits until explicitly told to do so
 	if te.batched {
 		return nil
@@ -181,21 +193,21 @@ func (te *nomsTableWriter) Close(ctx *sql.Context) error {
 }
 
 // StatementBegin implements the interface sql.TableEditor.
-func (te *nomsTableWriter) StatementBegin(ctx *sql.Context) {
+func (te *sqlTableWriter) StatementBegin(ctx *sql.Context) {
 	te.tableEditor.StatementStarted(ctx)
 }
 
 // DiscardChanges implements the interface sql.TableEditor.
-func (te *nomsTableWriter) DiscardChanges(ctx *sql.Context, errorEncountered error) error {
+func (te *sqlTableWriter) DiscardChanges(ctx *sql.Context, errorEncountered error) error {
 	return te.tableEditor.StatementFinished(ctx, true)
 }
 
 // StatementComplete implements the interface sql.TableEditor.
-func (te *nomsTableWriter) StatementComplete(ctx *sql.Context) error {
+func (te *sqlTableWriter) StatementComplete(ctx *sql.Context) error {
 	return te.tableEditor.StatementFinished(ctx, false)
 }
 
-func (te *nomsTableWriter) flush(ctx *sql.Context) error {
+func (te *sqlTableWriter) flush(ctx *sql.Context) error {
 	newRoot, err := te.sess.Flush(ctx)
 	if err != nil {
 		return err
@@ -204,7 +216,7 @@ func (te *nomsTableWriter) flush(ctx *sql.Context) error {
 	return te.setter(ctx, te.dbName, newRoot)
 }
 
-func (te *nomsTableWriter) resolveFks(ctx *sql.Context) error {
+func (te *sqlTableWriter) resolveFks(ctx *sql.Context) error {
 	tbl, err := te.tableEditor.Table(ctx)
 	if err != nil {
 		return err
@@ -223,16 +235,4 @@ func (te *nomsTableWriter) resolveFks(ctx *sql.Context) error {
 		}
 		return root, nil
 	})
-}
-
-func autoIncrementColFromSchema(sch schema.Schema) schema.Column {
-	var autoCol schema.Column
-	_ = sch.GetAllCols().Iter(func(tag uint64, col schema.Column) (stop bool, err error) {
-		if col.AutoIncrement {
-			autoCol = col
-			stop = true
-		}
-		return
-	})
-	return autoCol
 }
