@@ -170,8 +170,7 @@ func TestBoolParseValue(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(fmt.Sprintf(`%v %v`, BoolType.String(), test.input), func(t *testing.T) {
-			vrw := types.NewMemoryValueStore()
-			output, err := StringDefaultType.ConvertToType(context.Background(), vrw, BoolType, types.String(test.input))
+			output, err := BoolType.ParseValue(context.Background(), nil, &test.input)
 			if !test.expectedErr {
 				require.NoError(t, err)
 				assert.Equal(t, test.output, output)

@@ -161,6 +161,14 @@ func (ti *boolType) NomsKind() types.NomsKind {
 	return types.BoolKind
 }
 
+// ParseValue implements TypeInfo interface.
+func (ti *boolType) ParseValue(ctx context.Context, vrw types.ValueReadWriter, str *string) (types.Value, error) {
+	if str == nil || *str == "" {
+		return types.NullValue, nil
+	}
+	return ti.ConvertValueToNomsValue(context.Background(), nil, *str)
+}
+
 // Promote implements TypeInfo interface.
 func (ti *boolType) Promote() TypeInfo {
 	return ti
@@ -192,19 +200,7 @@ func boolTypeConverter(ctx context.Context, src *boolType, destTi TypeInfo) (tc 
 			}
 		}, true, nil
 	case *blobStringType:
-		return func(ctx context.Context, vrw types.ValueReadWriter, v types.Value) (types.Value, error) {
-			if v == nil || v == types.NullValue {
-				return types.NullValue, nil
-			}
-			val := v.(types.Bool)
-			var newVal int
-			if val {
-				newVal = 1
-			} else {
-				newVal = 0
-			}
-			return dest.ConvertValueToNomsValue(ctx, vrw, newVal)
-		}, true, nil
+		return wrapConvertValueToNomsValue(dest.ConvertValueToNomsValue)
 	case *boolType:
 		return identityTypeConverter, false, nil
 	case *datetimeType:
@@ -216,19 +212,7 @@ func boolTypeConverter(ctx context.Context, src *boolType, destTi TypeInfo) (tc 
 	case *floatType:
 		return wrapConvertValueToNomsValue(dest.ConvertValueToNomsValue)
 	case *inlineBlobType:
-		return func(ctx context.Context, vrw types.ValueReadWriter, v types.Value) (types.Value, error) {
-			if v == nil || v == types.NullValue {
-				return types.NullValue, nil
-			}
-			val := v.(types.Bool)
-			var newVal int
-			if val {
-				newVal = 1
-			} else {
-				newVal = 0
-			}
-			return dest.ConvertValueToNomsValue(ctx, vrw, newVal)
-		}, true, nil
+		return wrapConvertValueToNomsValue(dest.ConvertValueToNomsValue)
 	case *jsonType:
 		return wrapConvertValueToNomsValue(dest.ConvertValueToNomsValue)
 	case *intType:
@@ -242,33 +226,9 @@ func boolTypeConverter(ctx context.Context, src *boolType, destTi TypeInfo) (tc 
 	case *uuidType:
 		return nil, false, IncompatibleTypeConversion.New(src.String(), destTi.String())
 	case *varBinaryType:
-		return func(ctx context.Context, vrw types.ValueReadWriter, v types.Value) (types.Value, error) {
-			if v == nil || v == types.NullValue {
-				return types.NullValue, nil
-			}
-			val := v.(types.Bool)
-			var newVal int
-			if val {
-				newVal = 1
-			} else {
-				newVal = 0
-			}
-			return dest.ConvertValueToNomsValue(ctx, vrw, newVal)
-		}, true, nil
+		return wrapConvertValueToNomsValue(dest.ConvertValueToNomsValue)
 	case *varStringType:
-		return func(ctx context.Context, vrw types.ValueReadWriter, v types.Value) (types.Value, error) {
-			if v == nil || v == types.NullValue {
-				return types.NullValue, nil
-			}
-			val := v.(types.Bool)
-			var newVal int
-			if val {
-				newVal = 1
-			} else {
-				newVal = 0
-			}
-			return dest.ConvertValueToNomsValue(ctx, vrw, newVal)
-		}, true, nil
+		return wrapConvertValueToNomsValue(dest.ConvertValueToNomsValue)
 	case *yearType:
 		return wrapConvertValueToNomsValue(dest.ConvertValueToNomsValue)
 	default:
