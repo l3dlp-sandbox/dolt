@@ -176,8 +176,8 @@ func (se *SqlEngine) GetReturnFormat() PrintResultFormat {
 }
 
 // Query execute a SQL statement and return values for printing.
-func (se *SqlEngine) Query(ctx *sql.Context, query string) (sql.Schema, sql.RowIter, error) {
-	return se.engine.Query(ctx, query)
+func (se *SqlEngine) Query(ctx *sql.Context, connId uint32, query string) (sql.Schema, sql.RowIter, error) {
+	return se.engine.Query(ctx, connId, query)
 }
 
 // Analyze analyzes a node.
@@ -202,7 +202,7 @@ func (se *SqlEngine) Dbddl(ctx *sql.Context, dbddl *sqlparser.DBDDL, query strin
 		}
 	}
 
-	sch, rowIter, err := se.Query(ctx, query)
+	sch, rowIter, err := se.Query(ctx, 0, query)
 
 	if rowIter != nil {
 		err = rowIter.Close(ctx)

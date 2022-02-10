@@ -167,7 +167,7 @@ func (s *SqlEngineTableWriter) WriteRows(ctx context.Context, inputChannel chan 
 		return err
 	}
 
-	_, _, err = s.se.Query(s.sqlCtx, fmt.Sprintf("START TRANSACTION"))
+	_, _, err = s.se.Query(s.sqlCtx, 0, fmt.Sprintf("START TRANSACTION"))
 	if err != nil {
 		return err
 	}
@@ -255,7 +255,7 @@ func (s *SqlEngineTableWriter) WriteRows(ctx context.Context, inputChannel chan 
 }
 
 func (s *SqlEngineTableWriter) Commit(ctx context.Context) error {
-	_, _, err := s.se.Query(s.sqlCtx, "COMMIT")
+	_, _, err := s.se.Query(s.sqlCtx, 0, "COMMIT")
 	return err
 }
 
@@ -270,7 +270,7 @@ func (s *SqlEngineTableWriter) TableSchema() sql.PrimaryKeySchema {
 // forceDropTableIfNeeded drop the given table in case the -f parameter is passed.
 func (s *SqlEngineTableWriter) forceDropTableIfNeeded() error {
 	if s.force {
-		_, _, err := s.se.Query(s.sqlCtx, fmt.Sprintf("DROP TABLE IF EXISTS %s", s.tableName))
+		_, _, err := s.se.Query(s.sqlCtx, 0, fmt.Sprintf("DROP TABLE IF EXISTS %s", s.tableName))
 		return err
 	}
 
@@ -283,7 +283,7 @@ func (s *SqlEngineTableWriter) createOrEmptyTableIfNeeded() error {
 	case CreateOp:
 		return s.createTable()
 	case ReplaceOp:
-		_, _, err := s.se.Query(s.sqlCtx, fmt.Sprintf("TRUNCATE TABLE %s", s.tableName))
+		_, _, err := s.se.Query(s.sqlCtx, 0, fmt.Sprintf("TRUNCATE TABLE %s", s.tableName))
 		return err
 	default:
 		return nil

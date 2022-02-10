@@ -34,7 +34,7 @@ import (
 	"github.com/dolthub/vitess/go/vt/sqlparser"
 	"github.com/dolthub/vitess/go/vt/vterrors"
 	"github.com/fatih/color"
-	"github.com/flynn-archive/go-shlex"
+	shlex "github.com/flynn-archive/go-shlex"
 
 	"github.com/dolthub/dolt/go/cmd/dolt/cli"
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
@@ -992,7 +992,7 @@ func processQuery(ctx *sql.Context, query string, se *engine.SqlEngine) (sql.Sch
 
 	switch s := sqlStatement.(type) {
 	case *sqlparser.Use:
-		sch, ri, err := se.Query(ctx, query)
+		sch, ri, err := se.Query(ctx, 0, query)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1003,7 +1003,7 @@ func processQuery(ctx *sql.Context, query string, se *engine.SqlEngine) (sql.Sch
 		cli.Println("Database changed")
 		return sch, nil, err
 	case *sqlparser.MultiAlterDDL, *sqlparser.Set, *sqlparser.Commit:
-		_, ri, err := se.Query(ctx, query)
+		_, ri, err := se.Query(ctx, 0, query)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1013,7 +1013,7 @@ func processQuery(ctx *sql.Context, query string, se *engine.SqlEngine) (sql.Sch
 		}
 		return nil, nil, nil
 	case *sqlparser.DDL:
-		_, ri, err := se.Query(ctx, query)
+		_, ri, err := se.Query(ctx, 0, query)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1028,9 +1028,9 @@ func processQuery(ctx *sql.Context, query string, se *engine.SqlEngine) (sql.Sch
 		if s.Local {
 			return nil, nil, fmt.Errorf("LOCAL supported only in sql-server mode")
 		}
-		return se.Query(ctx, query)
+		return se.Query(ctx, 0, query)
 	default:
-		return se.Query(ctx, query)
+		return se.Query(ctx, 0, query)
 	}
 }
 
@@ -1062,7 +1062,7 @@ func (s *stats) shouldFlush() bool {
 
 func flushBatchedEdits(ctx *sql.Context, se *engine.SqlEngine) error {
 	err := se.IterDBs(func(_ string, db dsqle.SqlDatabase) (bool, error) {
-		_, rowIter, err := se.Query(ctx, "COMMIT;")
+		_, rowIter, err := se.Query(ctx, 0, "COMMIT;")
 		if err != nil {
 			return false, err
 		}
@@ -1177,7 +1177,7 @@ func processNonBatchableQuery(ctx *sql.Context, se *engine.SqlEngine, query stri
 }
 
 func processBatchableEditQuery(ctx *sql.Context, se *engine.SqlEngine, query string, sqlStatement sqlparser.Statement) (returnErr error) {
-	_, rowIter, err := se.Query(ctx, query)
+	_, rowIter, err := se.Query(ctx, 0, query)
 	if err != nil {
 		return err
 	}

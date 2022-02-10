@@ -174,14 +174,14 @@ func processFilterQuery(ctx context.Context, dEnv *env.DoltEnv, cm *doltdb.Commi
 	itr := sql.RowsToRowIter() // empty RowIter
 	switch sqlStatement.(type) {
 	case *sqlparser.Insert, *sqlparser.Update:
-		_, itr, err = eng.Query(sqlCtx, query)
+		_, itr, err = eng.Query(sqlCtx, 0, query)
 
 	case *sqlparser.Delete:
-		_, itr, err = eng.Query(sqlCtx, query)
+		_, itr, err = eng.Query(sqlCtx, 0, query)
 	case *sqlparser.MultiAlterDDL:
-		_, itr, err = eng.Query(sqlCtx, query)
+		_, itr, err = eng.Query(sqlCtx, 0, query)
 	case *sqlparser.DDL:
-		_, itr, err = eng.Query(sqlCtx, query)
+		_, itr, err = eng.Query(sqlCtx, 0, query)
 	case *sqlparser.Select, *sqlparser.OtherRead, *sqlparser.Show, *sqlparser.Explain, *sqlparser.Union:
 		return nil, fmt.Errorf("filter-branch queries must be write queries: '%s'", query)
 

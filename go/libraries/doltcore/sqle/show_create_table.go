@@ -42,7 +42,7 @@ func PrepareCreateTableStmt(ctx context.Context, sqlDb sql.Database) (*sql.Conte
 }
 
 func GetCreateTableStmt(ctx *sql.Context, engine *sqle.Engine, tableName string) (string, error) {
-	_, rowIter, err := engine.Query(ctx, fmt.Sprintf("SHOW CREATE TABLE `%s`;", tableName))
+	_, rowIter, err := engine.Query(ctx, 0, fmt.Sprintf("SHOW CREATE TABLE `%s`;", tableName))
 	if err != nil {
 		return "", err
 	}

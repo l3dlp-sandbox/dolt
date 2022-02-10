@@ -192,7 +192,7 @@ func (q Query) Exec(t *testing.T, dEnv *env.DoltEnv) error {
 	engine, sqlCtx, err := dsqle.NewTestEngine(t, dEnv, context.Background(), sqlDb, root)
 	require.NoError(t, err)
 
-	_, iter, err := engine.Query(sqlCtx, q.Query)
+	_, iter, err := engine.Query(sqlCtx, 0, q.Query)
 	if err != nil {
 		return err
 	}
