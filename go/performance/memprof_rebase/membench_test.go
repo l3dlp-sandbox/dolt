@@ -14,11 +14,11 @@ import (
 	"github.com/dolthub/dolt/go/store/types"
 )
 
-var loc = flag.String("f", "", "Directory of dolt database")
+var loc = flag.String("doltDir", "", "Directory of dolt database")
 
 func TestMain(m *testing.M) {
 	if *loc == "" {
-		log.Fatalf("f must be specified")
+		log.Fatalf("doltDir must be specified")
 	}
 	code := m.Run()
 	os.Exit(code)
