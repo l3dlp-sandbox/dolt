@@ -870,10 +870,10 @@ func (nbs *NomsBlockStore) Rebase(ctx context.Context) error {
 	}
 
 	if exists {
-		if contents.lock == nbs.upstream.lock {
-			// short-circuit if manifest is unchanged
-			return nil
-		}
+		//if contents.lock == nbs.upstream.lock {
+		//	// short-circuit if manifest is unchanged
+		//	return nil
+		//}
 
 		newTables, err := nbs.tables.Rebase(ctx, contents.specs, nbs.stats)
 		if err != nil {
