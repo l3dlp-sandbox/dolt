@@ -4,6 +4,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
+	"os"
 	"runtime"
 	"testing"
 
@@ -14,23 +16,41 @@ import (
 )
 
 var loc = flag.String("doltDir", "", "Directory of dolt database")
+var urlStr string
 var ddb *doltdb.DoltDB
 
-func BenchmarkRebaseMemory(b *testing.B) {
+func TestMain(m *testing.M) {
+	flag.Parse()
 	if *loc == "" {
-		b.Fatalf("doltDir must be specified")
+		log.Panicf("doltDir must be specified")
 	}
+
+	urlStr = "file://" + *loc + dbfactory.DoltDataDir
+
+	code := m.Run()
+	os.Exit(code)
+}
+
+func BenchmarkLoadMemory(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		ctx := context.Background()
-		urlStr := "file://" + *loc + dbfactory.DoltDataDir
+		var err error
+		ddb, err = doltdb.LoadDoltDB(ctx, types.Format_Default, urlStr, filesys.LocalFS)
+		if err != nil {
+			b.Fatalf("failed to load doltdb, err: %s", err.Error())
+		}
+	}
+}
+
+func BenchmarkRebaseMemory(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		ctx := context.Background()
 		ddb, err := doltdb.LoadDoltDB(ctx, types.Format_Default, urlStr, filesys.LocalFS)
 		if err != nil {
 			b.Fatalf("failed to load doltdb, err: %s", err.Error())
 		}
 
-		PrintMemUsage("Before: ")
 		err = ddb.Rebase(ctx)
-		PrintMemUsage("After: ")
 		if err != nil {
 			b.Fatalf(fmt.Sprintf("failed to rebase, err: %s", err.Error()))
 		}
