@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"os"
 	"testing"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/dbfactory"
@@ -16,15 +15,10 @@ import (
 
 var loc = flag.String("doltDir", "", "Directory of dolt database")
 
-func TestMain(m *testing.M) {
+func BenchmarkRebaseMemory(b *testing.B) {
 	if *loc == "" {
 		log.Fatalf("doltDir must be specified")
 	}
-	code := m.Run()
-	os.Exit(code)
-}
-
-func BenchmarkRebaseMemory(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		ctx := context.Background()
 		urlStr := "file://" + *loc + dbfactory.DoltDataDir
