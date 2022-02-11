@@ -403,14 +403,18 @@ func ReadTableIndex(rd io.ReadSeeker) (onHeapTableIndex, error) {
 		return onHeapTableIndex{}, ErrInvalidTableFile
 	}
 
-	indexBytes, err := iohelp.ReadNBytes(rd, int(indexSize))
+	prefixes, ordinals, err := streamComputePrefixes(chunkCount, rd)
 	if err != nil {
 		return onHeapTableIndex{}, ErrInvalidTableFile
 	}
-
-	prefixes, ordinals := computePrefixes(chunkCount, indexBytes[:tuplesSize])
-	lengths, offsets := computeOffsets(chunkCount, indexBytes[tuplesSize:tuplesSize+lengthsSize])
-	suffixes := indexBytes[tuplesSize+lengthsSize:]
+	lengths, offsets, err := streamComputeOffsets(chunkCount, rd)
+	if err != nil {
+		return onHeapTableIndex{}, ErrInvalidTableFile
+	}
+	suffixes, err := iohelp.ReadNBytes(rd, int(suffixesSize))
+	if err != nil {
+		return onHeapTableIndex{}, ErrInvalidTableFile
+	}
 
 	return onHeapTableIndex{
 		chunkCount, totalUncompressedData,
@@ -433,6 +437,35 @@ func computeOffsets(count uint32, buff []byte) (lengths []uint32, offsets []uint
 	return
 }
 
+func streamComputeOffsets(count uint32, rd io.Reader) (lengths []uint32, offsets []uint64, err error) {
+	lengths = make([]uint32, count)
+	offsets = make([]uint64, count)
+	buff := make([]byte, lengthSize)
+
+	n, err := rd.Read(buff)
+	if err != nil {
+		return nil, nil, err
+	}
+	if n != lengthSize {
+		return nil, nil, ErrNotEnoughBytes
+	}
+	lengths[0] = binary.BigEndian.Uint32(buff)
+
+	for i := uint64(1); i < uint64(count); i++ {
+		n, err := rd.Read(buff)
+		if err != nil {
+			return nil, nil, err
+		}
+		if n != lengthSize {
+			return nil, nil, ErrNotEnoughBytes
+		}
+		lengths[i] = binary.BigEndian.Uint32(buff)
+		offsets[i] = offsets[i-1] + uint64(lengths[i-1])
+	}
+
+	return
+}
+
 func computePrefixes(count uint32, buff []byte) (prefixes []uint64, ordinals []uint32) {
 	prefixes = make([]uint64, count)
 	ordinals = make([]uint32, count)
@@ -442,6 +475,26 @@ func computePrefixes(count uint32, buff []byte) (prefixes []uint64, ordinals []u
 		prefixes[i] = binary.BigEndian.Uint64(buff[idx:])
 		ordinals[i] = binary.BigEndian.Uint32(buff[idx+addrPrefixSize:])
 	}
+	return
+}
+
+func streamComputePrefixes(count uint32, rd io.Reader) (prefixes []uint64, ordinals []uint32, err error) {
+	prefixes = make([]uint64, count)
+	ordinals = make([]uint32, count)
+	buff := make([]byte, prefixTupleSize)
+
+	for i := uint64(0); i < uint64(count); i++ {
+		n, err := rd.Read(buff)
+		if err != nil {
+			return nil, nil, err
+		}
+		if n != prefixTupleSize {
+			return nil, nil, ErrNotEnoughBytes
+		}
+		prefixes[i] = binary.BigEndian.Uint64(buff)
+		ordinals[i] = binary.BigEndian.Uint32(buff[addrPrefixSize:])
+	}
+
 	return
 }
 
