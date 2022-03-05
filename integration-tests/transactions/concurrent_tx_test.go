@@ -76,138 +76,91 @@ var txTests = []ConcurrentTxTest{
 				assertion: func(s *dbr.Session) *dbr.SelectStmt {
 					return s.Select("*").From("tx.data")
 				},
-				expected: []testRow{
-					{1, 1},
-					{2, 2},
-					{3, 3},
-				},
+				expected: []testRow{{1, 1}, {2, 2}, {3, 3}},
 			},
 		},
 	},
 	{
 		name: "concurrent transactions",
 		queries: []concurrentQuery{
+			{conn: one, query: "BEGIN"},
+			{conn: two, query: "BEGIN"},
 			{
-				conn:  one,
-				query: "BEGIN;",
+				conn: two,
+				assertion: func(s *dbr.Session) *dbr.SelectStmt {
+					return s.Select("*").From("tx.data")
+				},
+				expected: []testRow{{1, 1}, {2, 2}, {3, 3}},
 			},
 			{
-				conn:  two,
-				query: "BEGIN;",
+				conn: one, query: "INSERT INTO tx.data VALUES (4,4)",
 			},
 			{
 				conn: two,
 				assertion: func(s *dbr.Session) *dbr.SelectStmt {
 					return s.Select("*").From("tx.data")
 				},
-				expected: []testRow{
-					{1, 1}, {2, 2}, {3, 3},
-				},
+				expected: []testRow{{1, 1}, {2, 2}, {3, 3}},
 			},
-			{
-				conn:  one,
-				query: "INSERT INTO tx.data VALUES (4,4)",
-			},
+			{conn: one, query: "COMMIT"},
 			{
 				conn: two,
 				assertion: func(s *dbr.Session) *dbr.SelectStmt {
 					return s.Select("*").From("tx.data")
 				},
-				expected: []testRow{
-					{1, 1}, {2, 2}, {3, 3},
-				},
+				expected: []testRow{{1, 1}, {2, 2}, {3, 3}},
 			},
-			{
-				conn:  one,
-				query: "COMMIT",
-			},
+			{conn: two, query: "COMMIT"},
 			{
 				conn: two,
 				assertion: func(s *dbr.Session) *dbr.SelectStmt {
 					return s.Select("*").From("tx.data")
 				},
-				expected: []testRow{
-					{1, 1}, {2, 2}, {3, 3},
-				},
-			},
-			{
-				conn:  two,
-				query: "COMMIT",
-			},
-			{
-				conn: two,
-				assertion: func(s *dbr.Session) *dbr.SelectStmt {
-					return s.Select("*").From("tx.data")
-				},
-				expected: []testRow{
-					{1, 1}, {2, 2}, {3, 3}, {4, 4},
-				},
+				expected: []testRow{{1, 1}, {2, 2}, {3, 3}, {4, 4}},
 			},
 		},
 	},
 	{
 		name: "concurrent updates",
 		queries: []concurrentQuery{
+			{conn: one, query: "BEGIN"},
+			{conn: two, query: "BEGIN"},
 			{
-				conn:  one,
-				query: "BEGIN;",
+				conn: two,
+				assertion: func(s *dbr.Session) *dbr.SelectStmt {
+					return s.Select("*").From("tx.data").Where("pk = 1")
+				},
+				expected: []testRow{{1, 1}},
 			},
 			{
-				conn:  two,
-				query: "BEGIN;",
+				conn: one, query: "UPDATE tx.data SET c0 = c0 + 10 WHERE pk = 1;",
 			},
 			{
 				conn: two,
 				assertion: func(s *dbr.Session) *dbr.SelectStmt {
 					return s.Select("*").From("tx.data").Where("pk = 1")
 				},
-				expected: []testRow{
-					{1, 1},
+				expected: []testRow{{1, 1}},
+			},
+			{conn: one, query: "COMMIT"},
+			{
+				conn: two,
+				assertion: func(s *dbr.Session) *dbr.SelectStmt {
+					return s.Select("*").From("tx.data").Where("pk = 1")
 				},
+				expected: []testRow{{1, 1}},
 			},
 			{
-				conn:  one,
-				query: "UPDATE tx.data SET c0 = c0 + 10 WHERE pk = 1;",
+				conn: two, query: "UPDATE tx.data SET c0 = c0 + 10 WHERE pk = 1;",
 			},
 			{
 				conn: two,
 				assertion: func(s *dbr.Session) *dbr.SelectStmt {
 					return s.Select("*").From("tx.data").Where("pk = 1")
 				},
-				expected: []testRow{
-					{1, 1},
-				},
+				expected: []testRow{{1, 21}},
 			},
-			{
-				conn:  one,
-				query: "COMMIT",
-			},
-			{
-				conn: two,
-				assertion: func(s *dbr.Session) *dbr.SelectStmt {
-					return s.Select("*").From("tx.data").Where("pk = 1")
-				},
-				expected: []testRow{
-					{1, 1},
-				},
-			},
-			{
-				conn:  two,
-				query: "UPDATE tx.data SET c0 = c0 + 10 WHERE pk = 1;",
-			},
-			{
-				conn: two,
-				assertion: func(s *dbr.Session) *dbr.SelectStmt {
-					return s.Select("*").From("tx.data").Where("pk = 1")
-				},
-				expected: []testRow{
-					{1, 21},
-				},
-			},
-			{
-				conn:  two,
-				query: "COMMIT",
-			},
+			{conn: two, query: "COMMIT"},
 		},
 	},
 }
