@@ -33,6 +33,17 @@ type AutoIncrementTracker struct {
 	mu            *sync.Mutex
 }
 
+func (a AutoIncrementTracker) Current(tablename string) interface{} {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	val, ok := a.valuePerTable[tablename]
+	if !ok {
+		val = 1
+	}
+	return val
+}
+
 func (a AutoIncrementTracker) Next(tableName string, insertVal interface{}, diskVal interface{}) (interface{}, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

@@ -188,10 +188,7 @@ func (w *prollyTableWriter) table(ctx context.Context) (t *doltdb.Table, err err
 	}
 
 	if w.aiCol.AutoIncrement && w.aiUpdate {
-		seq, err := w.aiTracker.Next(w.tableName, nil, nil)
-		if err != nil {
-			return nil, err
-		}
+		seq := w.aiTracker.Current(w.tableName)
 		vrw := w.tbl.ValueReadWriter()
 
 		v, err := w.aiCol.TypeInfo.ConvertValueToNomsValue(ctx, vrw, seq)
