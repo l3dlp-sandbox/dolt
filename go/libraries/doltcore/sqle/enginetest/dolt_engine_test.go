@@ -56,6 +56,30 @@ func TestSingleQuery(t *testing.T) {
 	enginetest.TestQuery(t, harness, engine, test.Query, test.Expected, test.ExpectedColumns, test.Bindings)
 }
 
+func TestSingleWriteQuery(t *testing.T) {
+	tests := []enginetest.WriteQueryTest{
+		{
+			WriteQuery:          `INSERT INTO auto_increment_tbl (c0) SELECT 44 FROM dual`,
+			ExpectedWriteResult: []sql.Row{{sql.OkResult{RowsAffected: 1, InsertID: 4}}},
+			SelectQuery:         "SELECT * FROM auto_increment_tbl",
+			ExpectedSelect: []sql.Row{
+				{1, 11},
+				{2, 22},
+				{3, 33},
+				{4, 44},
+			},
+		},
+	}
+
+	harness := newDoltHarness(t)
+	for _, test := range tests {
+		e := enginetest.NewEngine(t, harness)
+		enginetest.CreateIndexes(t, harness, e)
+		enginetest.TestQuery(t, harness, e, test.WriteQuery, test.ExpectedWriteResult, nil, test.Bindings)
+		enginetest.TestQuery(t, harness, e, test.SelectQuery, test.ExpectedSelect, nil, test.Bindings)
+	}
+}
+
 // Convenience test for debugging a single query. Unskip and set to the desired query.
 func TestSingleScript(t *testing.T) {
 	t.Skip()

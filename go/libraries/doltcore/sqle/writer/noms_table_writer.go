@@ -36,7 +36,7 @@ type TableWriter interface {
 	sql.RowDeleter
 	sql.AutoIncrementSetter
 
-	NextAutoIncrementValue(potentialVal, tableVal interface{}) (interface{}, error)
+	NextAutoIncrementValue(given interface{}) (interface{}, error)
 }
 
 // SessionRootSetter sets the root value for the session.
@@ -56,13 +56,14 @@ type nomsTableWriter struct {
 	tableName   string
 	dbName      string
 	sch         schema.Schema
-	autoIncCol  schema.Column
 	vrw         types.ValueReadWriter
 	kvToSQLRow  *index.KVToSqlRowConverter
 	tableEditor editor.TableEditor
 	sess        WriteSession
-	aiTracker   globalstate.AutoIncrementTracker
 	batched     bool
+
+	autoInc globalstate.AutoIncrementTracker
+	autoOrd int
 
 	setter SessionRootSetter
 }
@@ -91,7 +92,10 @@ func (te *nomsTableWriter) Insert(ctx *sql.Context, sqlRow sql.Row) error {
 			}
 			return te.tableEditor.InsertKeyVal(ctx, k, v, tagToVal, te.duplicateKeyErrFunc)
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		return te.updateAutoIncrement(sqlRow)
 	}
 	dRow, err := sqlutil.SqlRowToDoltRow(ctx, te.vrw, sqlRow, te.sch)
 	if err != nil {
@@ -155,30 +159,33 @@ func (te *nomsTableWriter) Update(ctx *sql.Context, oldRow sql.Row, newRow sql.R
 		}
 		return te.tableEditor.UpdateRow(ctx, dOldRow, dNewRow, te.duplicateKeyErrFunc)
 	}
-	return err
-}
-
-func (te *nomsTableWriter) NextAutoIncrementValue(potentialVal, tableVal interface{}) (interface{}, error) {
-	return te.aiTracker.Next(te.tableName, potentialVal, tableVal)
-}
-
-func (te *nomsTableWriter) GetAutoIncrementValue() (interface{}, error) {
-	val := te.tableEditor.GetAutoIncrementValue()
-	return te.autoIncCol.TypeInfo.ConvertNomsValueToValue(val)
-}
-
-func (te *nomsTableWriter) SetAutoIncrementValue(ctx *sql.Context, val interface{}) error {
-	nomsVal, err := te.autoIncCol.TypeInfo.ConvertValueToNomsValue(ctx, te.vrw, val)
 	if err != nil {
 		return err
 	}
-	if err = te.tableEditor.SetAutoIncrementValue(nomsVal); err != nil {
-		return err
-	}
 
-	te.aiTracker.Reset(te.tableName, val)
+	return te.updateAutoIncrement(newRow)
+}
+
+func (te *nomsTableWriter) NextAutoIncrementValue(given interface{}) (interface{}, error) {
+	return te.autoInc.Next(te.tableName, given)
+}
+
+func (te *nomsTableWriter) SetAutoIncrementValue(ctx *sql.Context, val interface{}) error {
+	//nomsVal, err := te.autoIncCol.TypeInfo.ConvertValueToNomsValue(ctx, te.vrw, val)
+	//if err != nil {
+	//	return err
+	//}
+
+	te.autoInc.Set(te.tableName, val)
 
 	return te.flush(ctx)
+}
+
+func (te *nomsTableWriter) updateAutoIncrement(row sql.Row) (err error) {
+	if te.autoOrd >= 0 {
+		_, err = te.autoInc.Next(te.tableName, row[te.autoOrd])
+	}
+	return
 }
 
 // Close implements Closer

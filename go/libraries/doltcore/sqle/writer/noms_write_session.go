@@ -19,13 +19,14 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/dolthub/dolt/go/store/types"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/doltdb"
 	"github.com/dolthub/dolt/go/libraries/doltcore/schema"
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/globalstate"
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/index"
 	"github.com/dolthub/dolt/go/libraries/doltcore/table/editor"
+	"github.com/dolthub/dolt/go/store/types"
 )
 
 // WriteSession encapsulates writes made within a SQL session.
@@ -54,11 +55,12 @@ type WriteSession interface {
 // nomsWriteSession handles all edit operations on a table that may also update other tables.
 // Serves as coordination for SessionedTableEditors.
 type nomsWriteSession struct {
-	opts editor.Options
+	root    *doltdb.RootValue
+	tables  map[string]*sessionedTableEditor
+	autoInc globalstate.AutoIncrementTracker
+	mut     *sync.RWMutex // This mutex is specifically for changes that affect the TES or all STEs
 
-	root       *doltdb.RootValue
-	tables     map[string]*sessionedTableEditor
-	writeMutex *sync.RWMutex // This mutex is specifically for changes that affect the TES or all STEs
+	opts editor.Options
 }
 
 var _ WriteSession = &nomsWriteSession{}
@@ -76,16 +78,19 @@ func NewWriteSession(nbf *types.NomsBinFormat, root *doltdb.RootValue, opts edit
 	}
 
 	return &nomsWriteSession{
-		opts:       opts,
-		root:       root,
-		tables:     make(map[string]*sessionedTableEditor),
-		writeMutex: &sync.RWMutex{},
+		opts:   opts,
+		root:   root,
+		tables: make(map[string]*sessionedTableEditor),
+		mut:    &sync.RWMutex{},
 	}
 }
 
 func (s *nomsWriteSession) GetTableWriter(ctx context.Context, table string, database string, ait globalstate.AutoIncrementTracker, setter SessionRootSetter, batched bool) (TableWriter, error) {
-	s.writeMutex.Lock()
-	defer s.writeMutex.Unlock()
+	s.mut.Lock()
+	defer s.mut.Unlock()
+
+	// todo(andy): set in constructor
+	s.autoInc = ait
 
 	t, ok, err := s.root.GetTable(ctx, table)
 	if err != nil {
@@ -106,28 +111,34 @@ func (s *nomsWriteSession) GetTableWriter(ctx context.Context, table string, dat
 	}
 
 	conv := index.NewKVToSqlRowConverterForCols(t.Format(), sch)
-	ac := autoIncrementColFromSchema(sch)
+
+	autoOrd := -1
+	for i, col := range sch.GetAllCols().GetColumns() {
+		if col.AutoIncrement {
+			autoOrd = i
+			break
+		}
+	}
 
 	return &nomsTableWriter{
 		tableName:   table,
 		dbName:      database,
 		sch:         sch,
-		autoIncCol:  ac,
 		vrw:         s.root.VRW(),
 		kvToSQLRow:  conv,
 		tableEditor: te,
 		sess:        s,
 		batched:     batched,
-		aiTracker:   ait,
+		autoInc:     ait,
+		autoOrd:     autoOrd,
 		setter:      setter,
 	}, nil
 }
 
 // Flush returns an updated root with all of the changed tables.
 func (s *nomsWriteSession) Flush(ctx context.Context) (*doltdb.RootValue, error) {
-	s.writeMutex.Lock()
-	defer s.writeMutex.Unlock()
-
+	s.mut.Lock()
+	defer s.mut.Unlock()
 	return s.flush(ctx)
 }
 
@@ -137,8 +148,8 @@ func (s *nomsWriteSession) Flush(ctx context.Context) (*doltdb.RootValue, error)
 // been flushed. If the purpose is to add a new table, foreign key, etc. (using Flush followed up with SetRoot), then
 // use UpdateRoot. Calling the two functions manually for the purposes of root modification may lead to race conditions.
 func (s *nomsWriteSession) SetRoot(ctx context.Context, root *doltdb.RootValue) error {
-	s.writeMutex.Lock()
-	defer s.writeMutex.Unlock()
+	s.mut.Lock()
+	defer s.mut.Unlock()
 
 	return s.setRoot(ctx, root)
 }
@@ -147,8 +158,8 @@ func (s *nomsWriteSession) SetRoot(ctx context.Context, root *doltdb.RootValue) 
 // key, etc.) and passes in the flushed root. The function may then safely modify the root, and return the modified root
 // (assuming no errors). The nomsWriteSession will update itself in accordance with the newly returned root.
 func (s *nomsWriteSession) UpdateRoot(ctx context.Context, cb func(ctx context.Context, current *doltdb.RootValue) (*doltdb.RootValue, error)) error {
-	s.writeMutex.Lock()
-	defer s.writeMutex.Unlock()
+	s.mut.Lock()
+	defer s.mut.Unlock()
 
 	current, err := s.flush(ctx)
 	if err != nil {
@@ -173,44 +184,44 @@ func (s *nomsWriteSession) SetOptions(opts editor.Options) {
 
 // flush is the inner implementation for Flush that does not acquire any locks
 func (s *nomsWriteSession) flush(ctx context.Context) (*doltdb.RootValue, error) {
-	rootMutex := &sync.Mutex{}
-	wg := &sync.WaitGroup{}
-	wg.Add(len(s.tables))
-
 	newRoot := s.root
-	var tableErr error
-	var rootErr error
-	for tableName, ste := range s.tables {
-		if !ste.HasEdits() {
-			wg.Done()
+	mu := &sync.Mutex{}
+	rootUpdate := func(name string, table *doltdb.Table) (err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if newRoot != nil {
+			newRoot, err = newRoot.PutTable(ctx, name, table)
+		}
+		return err
+	}
+
+	eg, ctx := errgroup.WithContext(ctx)
+
+	for tblName, tblEditor := range s.tables {
+		if !tblEditor.HasEdits() {
 			continue
 		}
 
-		// we can run all of the Table calls concurrently as long as we guard updating the root
-		go func(tableName string, ste *sessionedTableEditor) {
-			defer wg.Done()
-			updatedTable, err := ste.tableEditor.Table(ctx)
-			// we lock immediately after doing the operation, since both error setting and root updating are guarded
-			rootMutex.Lock()
-			defer rootMutex.Unlock()
+		// copy variables
+		name, ed := tblName, tblEditor
+
+		eg.Go(func() error {
+			tbl, err := ed.tableEditor.Table(ctx)
 			if err != nil {
-				if tableErr == nil {
-					tableErr = err
-				}
-				return
+				return err
 			}
-			newRoot, err = newRoot.PutTable(ctx, tableName, updatedTable)
-			if err != nil && rootErr == nil {
-				rootErr = err
+
+			v := s.autoInc.Current(name)
+			tbl, err = tbl.SetAutoIncrementValue(ctx, v)
+			if err != nil {
+				return err
 			}
-		}(tableName, ste)
+
+			return rootUpdate(name, tbl)
+		})
 	}
-	wg.Wait()
-	if tableErr != nil {
-		return nil, tableErr
-	}
-	if rootErr != nil {
-		return nil, rootErr
+	if err := eg.Wait(); err != nil {
+		return nil, err
 	}
 
 	s.root = newRoot

@@ -207,12 +207,7 @@ func (t *DoltTable) GetAutoIncrementValue(ctx *sql.Context) (interface{}, error)
 	if err != nil {
 		return nil, err
 	}
-
-	val, err := table.GetAutoIncrementValue(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return t.autoIncCol.TypeInfo.ConvertNomsValueToValue(val)
+	return table.GetAutoIncrementValue(ctx)
 }
 
 // Name returns the name of the table.
@@ -434,7 +429,10 @@ func (t *WritableDoltTable) getTableEditor(ctx *sql.Context) (ed writer.TableWri
 	if err != nil {
 		return nil, err
 	}
-	ait := t.db.gs.GetAutoIncrementTracker(ws.Ref())
+	ait, err := t.db.gs.GetAutoIncrementTracker(ctx, ws)
+	if err != nil {
+		return nil, err
+	}
 
 	state, _, err := ds.LookupDbState(ctx, t.db.name)
 	if err != nil {
@@ -572,12 +570,7 @@ func (t *WritableDoltTable) GetNextAutoIncrementValue(ctx *sql.Context, potentia
 		return nil, err
 	}
 
-	tableVal, err := t.getTableAutoIncrementValue(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return ed.NextAutoIncrementValue(potentialVal, tableVal)
+	return ed.NextAutoIncrementValue(potentialVal)
 }
 
 func (t *WritableDoltTable) getTableAutoIncrementValue(ctx *sql.Context) (interface{}, error) {
@@ -1172,14 +1165,25 @@ func (t *AlterableDoltTable) ModifyColumn(ctx *sql.Context, columnName string, c
 			}
 		}
 
-		initialValNoms, err := col.TypeInfo.ConvertValueToNomsValue(ctx, root.VRW(), initialValue)
+		nomsVal, err := col.TypeInfo.ConvertValueToNomsValue(ctx, root.VRW(), initialValue)
 		if err != nil {
 			return err
 		}
 
-		initialValNoms = increment(initialValNoms)
+		nomsVal = increment(nomsVal)
 
-		updatedTable, err = updatedTable.SetAutoIncrementValue(ctx, initialValNoms)
+		// todo(andy)
+		var seq uint64
+		switch t := nomsVal.(type) {
+		case types.Int:
+			seq = uint64(t)
+		case types.Uint:
+			seq = uint64(t)
+		case types.Float:
+			seq = uint64(t)
+		}
+
+		updatedTable, err = updatedTable.SetAutoIncrementValue(ctx, seq)
 		if err != nil {
 			return err
 		}

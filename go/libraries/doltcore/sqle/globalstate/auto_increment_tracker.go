@@ -15,146 +15,108 @@
 package globalstate
 
 import (
+	"context"
 	"fmt"
 	"sync"
+
+	"github.com/dolthub/go-mysql-server/sql"
+	"github.com/dolthub/vitess/go/sqltypes"
+
+	"github.com/dolthub/dolt/go/libraries/doltcore/doltdb"
+	"github.com/dolthub/dolt/go/libraries/doltcore/schema"
 )
 
-// AutoIncrementTracker is a global map that tracks which auto increment keys have been given for each table. At runtime
-// it hands out the current key.
-func NewAutoIncrementTracker() AutoIncrementTracker {
-	return AutoIncrementTracker{
-		valuePerTable: make(map[string]interface{}),
-		mu:            &sync.Mutex{},
+func init() {
+	if uint64Type, _ = sql.CreateNumberType(sqltypes.Uint64); uint64Type == nil {
+		panic("cannot create auto increment type")
 	}
+}
+
+var uint64Type sql.Type
+
+func NewAutoIncrementTracker(ctx context.Context, root *doltdb.RootValue) (ait AutoIncrementTracker, err error) {
+	ait = AutoIncrementTracker{
+		sequences: make(map[string]uint64),
+		mu:        &sync.Mutex{},
+	}
+
+	// collect auto increment values
+	err = root.IterTables(ctx, func(name string, table *doltdb.Table, sch schema.Schema) (bool, error) {
+		ok := schema.HasAutoIncrement(sch)
+		if !ok {
+			return false, nil
+		}
+		seq, err := table.GetAutoIncrementValue(ctx)
+		if err != nil {
+			return true, err
+		}
+		ait.sequences[name] = seq
+		return false, nil
+	})
+	return ait, err
 }
 
 type AutoIncrementTracker struct {
-	valuePerTable map[string]interface{}
-	mu            *sync.Mutex
+	sequences map[string]uint64
+	mu        *sync.Mutex
 }
 
-func (a AutoIncrementTracker) Current(tablename string) interface{} {
+func (a AutoIncrementTracker) Current(tablename string) uint64 {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	val, ok := a.valuePerTable[tablename]
-	if !ok {
-		val = 1
-	}
-	return val
+	return a.sequences[tablename]
 }
 
-func (a AutoIncrementTracker) Next(tableName string, insertVal interface{}, diskVal interface{}) (interface{}, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	diskVal = valOrZero(diskVal)
-
-	// Case 0: Just use the value passed in.
-	potential, ok := a.valuePerTable[tableName]
-	if !ok {
-		// Use the disk val if the table has not been initialized yet.
-		potential = diskVal
-	}
-
-	// Case 1: Disk Val is greater. This is useful for updating the tracker when a merge occurs.
-	// TODO: This is a bit of a hack. The correct solution is to plumb this tracker through the merge logic.
-	diskValGreater, err := geq(valOrZero(diskVal), valOrZero(a.valuePerTable[tableName]))
-	if err != nil {
-		return nil, err
-	}
-
-	if diskValGreater {
-		potential = diskVal
-	}
-
-	// Case 2: Overwrite anything if an insert val is passed.
-	if insertVal != nil {
-		potential = insertVal
-	}
-
-	// update the table only if val >= existing
-	isGeq, err := geq(valOrZero(potential), valOrZero(a.valuePerTable[tableName]))
+func (a AutoIncrementTracker) Next(tbl string, insertVal interface{}) (seq uint64, err error) {
+	insertVal, err = uint64Type.Convert(insertVal)
 	if err != nil {
 		return 0, err
 	}
 
-	if isGeq {
-		val, err := convertIntTypeToUint(potential)
-		if err != nil {
-			return val, err
-		}
-
-		a.valuePerTable[tableName] = val + 1
+	given, ok := insertVal.(uint64)
+	if !ok {
+		given = 0
 	}
 
-	return potential, nil
+	seq, ok = a.sequences[tbl]
+	if !ok {
+		return 0, fmt.Errorf("missing AUTO_INCREMENT sequence")
+	}
+
+	if given >= seq {
+		seq = given
+		a.sequences[tbl] = given
+		a.sequences[tbl]++
+	}
+	return
 }
 
-func (a AutoIncrementTracker) Reset(tableName string, val interface{}) {
+// todo(andy) can we alter to less than current?
+func (a AutoIncrementTracker) Set(tableName string, val interface{}) (err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.valuePerTable[tableName] = val
+	val, err = uint64Type.Convert(val)
+	if err != nil {
+		return err
+	}
+
+	seq, ok := val.(uint64)
+	if !ok {
+		return fmt.Errorf("invalid AUTO_INCREMENT value %v", val)
+	}
+	a.sequences[tableName] = seq
+	return
+}
+
+func (a AutoIncrementTracker) AddTable(tableName string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.sequences[tableName] = uint64(1)
 }
 
 func (a AutoIncrementTracker) DropTable(tableName string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	delete(a.valuePerTable, tableName)
-}
-
-// Helper method that sets nil values to 0 for clarity purposes
-func valOrZero(val interface{}) interface{} {
-	if val == nil {
-		return 0
-	}
-
-	return val
-}
-
-func geq(val1 interface{}, val2 interface{}) (bool, error) {
-	v1, err := convertIntTypeToUint(val1)
-	if err != nil {
-		return false, err
-	}
-
-	v2, err := convertIntTypeToUint(val2)
-	if err != nil {
-		return false, err
-	}
-
-	return v1 >= v2, nil
-}
-
-func convertIntTypeToUint(val interface{}) (uint64, error) {
-	switch t := val.(type) {
-	case int:
-		return uint64(t), nil
-	case int8:
-		return uint64(t), nil
-	case int16:
-		return uint64(t), nil
-	case int32:
-		return uint64(t), nil
-	case int64:
-		return uint64(t), nil
-	case uint:
-		return uint64(t), nil
-	case uint8:
-		return uint64(t), nil
-	case uint16:
-		return uint64(t), nil
-	case uint32:
-		return uint64(t), nil
-	case uint64:
-		return t, nil
-	case float32:
-		return uint64(t), nil
-	case float64:
-		return uint64(t), nil
-	default:
-		return 0, fmt.Errorf("error: auto increment is not a numeric type")
-	}
+	delete(a.sequences, tableName)
 }
