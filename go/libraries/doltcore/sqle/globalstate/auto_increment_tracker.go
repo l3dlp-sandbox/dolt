@@ -20,19 +20,22 @@ import (
 	"sync"
 
 	"github.com/dolthub/go-mysql-server/sql"
-	"github.com/dolthub/vitess/go/sqltypes"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/doltdb"
 	"github.com/dolthub/dolt/go/libraries/doltcore/schema"
 )
 
-func init() {
-	if uint64Type, _ = sql.CreateNumberType(sqltypes.Uint64); uint64Type == nil {
-		panic("cannot create auto increment type")
+func CoerceAutoIncrementValue(val interface{}) (seq uint64, err error) {
+	val, err = sql.Uint64.Convert(val)
+	if err != nil {
+		return 0, err
 	}
+	seq, ok := val.(uint64)
+	if !ok {
+		seq = 0
+	}
+	return
 }
-
-var uint64Type sql.Type
 
 func NewAutoIncrementTracker(ctx context.Context, root *doltdb.RootValue) (ait AutoIncrementTracker, err error) {
 	ait = AutoIncrementTracker{
@@ -61,23 +64,24 @@ type AutoIncrementTracker struct {
 	mu        *sync.Mutex
 }
 
-func (a AutoIncrementTracker) Current(tablename string) uint64 {
+// Current returns the current AUTO_INCREMENT value for |tableName|.
+func (a AutoIncrementTracker) Current(tableName string) uint64 {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.sequences[tablename]
+	return a.sequences[tableName]
 }
 
+// Next returns the next AUTO_INCREMENT value for |tableName|, considering the provided |insertVal|.
 func (a AutoIncrementTracker) Next(tbl string, insertVal interface{}) (seq uint64, err error) {
-	insertVal, err = uint64Type.Convert(insertVal)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	given, err := CoerceAutoIncrementValue(insertVal)
 	if err != nil {
 		return 0, err
 	}
 
-	given, ok := insertVal.(uint64)
-	if !ok {
-		given = 0
-	}
-
+	var ok bool
 	seq, ok = a.sequences[tbl]
 	if !ok {
 		return 0, fmt.Errorf("missing AUTO_INCREMENT sequence")
@@ -91,30 +95,21 @@ func (a AutoIncrementTracker) Next(tbl string, insertVal interface{}) (seq uint6
 	return
 }
 
-// todo(andy) can we alter to less than current?
-func (a AutoIncrementTracker) Set(tableName string, val interface{}) (err error) {
+// Set sets the current AUTO_INCREMENT value for |tableName|.
+func (a AutoIncrementTracker) Set(tableName string, val uint64) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	val, err = uint64Type.Convert(val)
-	if err != nil {
-		return err
-	}
-
-	seq, ok := val.(uint64)
-	if !ok {
-		return fmt.Errorf("invalid AUTO_INCREMENT value %v", val)
-	}
-	a.sequences[tableName] = seq
-	return
+	a.sequences[tableName] = val
 }
 
+// AddTable adds |tablename| to the AutoIncrementTracker.
 func (a AutoIncrementTracker) AddTable(tableName string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.sequences[tableName] = uint64(1)
 }
 
+// DropTable drops |tablename| from the AutoIncrementTracker.
 func (a AutoIncrementTracker) DropTable(tableName string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

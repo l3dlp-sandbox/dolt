@@ -27,7 +27,6 @@ import (
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/index"
 	"github.com/dolthub/dolt/go/store/pool"
 	"github.com/dolthub/dolt/go/store/prolly"
-	"github.com/dolthub/dolt/go/store/types"
 	"github.com/dolthub/dolt/go/store/val"
 )
 
@@ -102,35 +101,24 @@ func (w *prollyTableWriter) Update(ctx *sql.Context, oldRow sql.Row, newRow sql.
 	return nil
 }
 
-// NextAutoIncrementValue implements TableWriter.
-func (w *prollyTableWriter) NextAutoIncrementValue(given interface{}) (interface{}, error) {
-	return w.aiTracker.Next(w.tableName, given)
+// GetNextAutoIncrementValue implements TableWriter.
+func (w *prollyTableWriter) GetNextAutoIncrementValue(ctx *sql.Context, insertVal interface{}) (uint64, error) {
+	return w.aiTracker.Next(w.tableName, insertVal)
 }
 
 // SetAutoIncrementValue implements TableWriter.
-func (w *prollyTableWriter) SetAutoIncrementValue(ctx *sql.Context, val interface{}) error {
-	nomsVal, err := w.aiCol.TypeInfo.ConvertValueToNomsValue(ctx, w.tbl.ValueReadWriter(), val)
+func (w *prollyTableWriter) SetAutoIncrementValue(ctx *sql.Context, val uint64) error {
+	seq, err := globalstate.CoerceAutoIncrementValue(val)
 	if err != nil {
 		return err
 	}
 
-	// todo(andy)
-	var seq uint64
-	switch t := nomsVal.(type) {
-	case types.Int:
-		seq = uint64(t)
-	case types.Uint:
-		seq = uint64(t)
-	case types.Float:
-		seq = uint64(t)
-	}
-
+	// todo(andy) set here or in flush?
 	w.tbl, err = w.tbl.SetAutoIncrementValue(ctx, seq)
 	if err != nil {
 		return err
 	}
-
-	w.aiTracker.Set(w.tableName, val)
+	w.aiTracker.Set(w.tableName, seq)
 
 	return w.flush(ctx)
 }

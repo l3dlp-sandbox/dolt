@@ -35,8 +35,7 @@ type TableWriter interface {
 	sql.RowInserter
 	sql.RowDeleter
 	sql.AutoIncrementSetter
-
-	NextAutoIncrementValue(given interface{}) (interface{}, error)
+	GetNextAutoIncrementValue(ctx *sql.Context, insertVal interface{}) (uint64, error)
 }
 
 // SessionRootSetter sets the root value for the session.
@@ -166,17 +165,16 @@ func (te *nomsTableWriter) Update(ctx *sql.Context, oldRow sql.Row, newRow sql.R
 	return te.updateAutoIncrement(newRow)
 }
 
-func (te *nomsTableWriter) NextAutoIncrementValue(given interface{}) (interface{}, error) {
-	return te.autoInc.Next(te.tableName, given)
+func (te *nomsTableWriter) GetNextAutoIncrementValue(ctx *sql.Context, insertVal interface{}) (uint64, error) {
+	return te.autoInc.Next(te.tableName, insertVal)
 }
 
-func (te *nomsTableWriter) SetAutoIncrementValue(ctx *sql.Context, val interface{}) error {
-	//nomsVal, err := te.autoIncCol.TypeInfo.ConvertValueToNomsValue(ctx, te.vrw, val)
-	//if err != nil {
-	//	return err
-	//}
-
-	te.autoInc.Set(te.tableName, val)
+func (te *nomsTableWriter) SetAutoIncrementValue(ctx *sql.Context, val uint64) error {
+	seq, err := globalstate.CoerceAutoIncrementValue(val)
+	if err != nil {
+		return err
+	}
+	te.autoInc.Set(te.tableName, seq)
 
 	return te.flush(ctx)
 }
