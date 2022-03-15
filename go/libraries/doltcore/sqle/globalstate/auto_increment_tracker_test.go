@@ -14,6 +14,63 @@
 
 package globalstate
 
+import (
+	"fmt"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
+
+func TestCoerceAutoIncrementValue(t *testing.T) {
+	tests := []struct {
+		val interface{}
+		exp uint64
+		err bool
+	}{
+		{
+			val: nil,
+			exp: uint64(1),
+		},
+		{
+			val: int32(0),
+			exp: uint64(1),
+		},
+		{
+			val: int32(1),
+			exp: uint64(1),
+		},
+		{
+			val: uint32(1),
+			exp: uint64(1),
+		},
+		{
+			val: float32(1),
+			exp: uint64(1),
+		},
+		{
+			val: float32(1.1),
+			exp: uint64(1),
+		},
+		{
+			val: float32(1.9),
+			exp: uint64(2),
+		},
+	}
+
+	for _, test := range tests {
+		name := fmt.Sprintf("Coerce %v to %v", test.val, test.exp)
+		t.Run(name, func(t *testing.T) {
+			act, err := CoerceAutoIncrementValue(test.val)
+			if test.err {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+			assert.Equal(t, test.exp, act)
+		})
+	}
+}
+
 //func TestNextHasNoRepeats(t *testing.T) {
 //	var allVals sync.Map
 //	aiTracker, err := NewAutoIncrementTracker(nil,)

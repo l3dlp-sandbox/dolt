@@ -786,14 +786,7 @@ func mergeAutoIncrementValues(ctx context.Context, tbl, otherTbl, resultTbl *dol
 	if err != nil {
 		return nil, err
 	}
-	auto := false
-	_ = sch.GetAllCols().Iter(func(tag uint64, col schema.Column) (stop bool, err error) {
-		if col.AutoIncrement {
-			auto, stop = true, true
-		}
-		return
-	})
-	if !auto {
+	if !schema.HasAutoIncrement(sch) {
 		return resultTbl, nil
 	}
 

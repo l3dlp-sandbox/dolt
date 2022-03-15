@@ -452,25 +452,12 @@ func (t *Table) VerifyIndexRowData(ctx context.Context, indexName string) error 
 
 // GetAutoIncrementValue returns the current AUTO_INCREMENT value for this table.
 func (t *Table) GetAutoIncrementValue(ctx context.Context) (uint64, error) {
-	val, err := t.table.GetAutoIncrement(ctx)
-	if err != nil {
-		return 0, err
-	}
-	switch t := val.(type) {
-	case types.Int:
-		return uint64(t), nil
-	case types.Uint:
-		return uint64(t), nil
-	case types.Float:
-		return uint64(t), nil
-	default:
-		return 0, fmt.Errorf("unexpected AUTO_INCREMENT value %v", val)
-	}
+	return t.table.GetAutoIncrement(ctx)
 }
 
 // SetAutoIncrementValue sets the current AUTO_INCREMENT value for this table.
 func (t *Table) SetAutoIncrementValue(ctx context.Context, val uint64) (*Table, error) {
-	table, err := t.table.SetAutoIncrement(ctx, types.Uint(val))
+	table, err := t.table.SetAutoIncrement(ctx, val)
 	if err != nil {
 		return nil, err
 	}

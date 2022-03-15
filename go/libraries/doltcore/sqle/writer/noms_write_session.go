@@ -55,10 +55,10 @@ type WriteSession interface {
 // nomsWriteSession handles all edit operations on a table that may also update other tables.
 // Serves as coordination for SessionedTableEditors.
 type nomsWriteSession struct {
-	root    *doltdb.RootValue
-	tables  map[string]*sessionedTableEditor
-	autoInc globalstate.AutoIncrementTracker
-	mut     *sync.RWMutex // This mutex is specifically for changes that affect the TES or all STEs
+	root   *doltdb.RootValue
+	tables map[string]*sessionedTableEditor
+	autos  map[string]globalstate.AutoIncrementTracker
+	mut    *sync.RWMutex // This mutex is specifically for changes that affect the TES or all STEs
 
 	opts editor.Options
 }
@@ -81,6 +81,7 @@ func NewWriteSession(nbf *types.NomsBinFormat, root *doltdb.RootValue, opts edit
 		opts:   opts,
 		root:   root,
 		tables: make(map[string]*sessionedTableEditor),
+		autos:  make(map[string]globalstate.AutoIncrementTracker),
 		mut:    &sync.RWMutex{},
 	}
 }
@@ -88,9 +89,6 @@ func NewWriteSession(nbf *types.NomsBinFormat, root *doltdb.RootValue, opts edit
 func (s *nomsWriteSession) GetTableWriter(ctx context.Context, table string, database string, ait globalstate.AutoIncrementTracker, setter SessionRootSetter, batched bool) (TableWriter, error) {
 	s.mut.Lock()
 	defer s.mut.Unlock()
-
-	// todo(andy): set in constructor
-	s.autoInc = ait
 
 	t, ok, err := s.root.GetTable(ctx, table)
 	if err != nil {
@@ -109,6 +107,7 @@ func (s *nomsWriteSession) GetTableWriter(ctx context.Context, table string, dat
 	if err != nil {
 		return nil, err
 	}
+	s.autos[table] = ait
 
 	conv := index.NewKVToSqlRowConverterForCols(t.Format(), sch)
 
@@ -211,7 +210,7 @@ func (s *nomsWriteSession) flush(ctx context.Context) (*doltdb.RootValue, error)
 				return err
 			}
 
-			v := s.autoInc.Current(name)
+			v := s.autos[name].Current(name)
 			tbl, err = tbl.SetAutoIncrementValue(ctx, v)
 			if err != nil {
 				return err
@@ -331,6 +330,9 @@ func (s *nomsWriteSession) setRoot(ctx context.Context, root *doltdb.RootValue) 
 	}
 	s.root = root
 
+	all, _ := root.AllAutoIncrements(ctx)
+	fmt.Println(all)
+
 	for tableName, localTableEditor := range s.tables {
 		t, ok, err := root.GetTable(ctx, tableName)
 		if err != nil {
@@ -347,6 +349,16 @@ func (s *nomsWriteSession) setRoot(ctx context.Context, root *doltdb.RootValue) 
 		if err != nil {
 			return err
 		}
+
+		if schema.HasAutoIncrement(tSch) {
+			seq, err := t.GetAutoIncrementValue(ctx)
+			if err != nil {
+				return err
+			}
+			// todo(andy): do we need some monotonicity here?
+			s.autos[tableName].Set(tableName, seq)
+		}
+
 		newTableEditor, err := editor.NewTableEditor(ctx, t, tSch, tableName, s.opts)
 		if err != nil {
 			return err

@@ -21,8 +21,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dolthub/dolt/go/libraries/doltcore/doltdb/durable"
+	"gopkg.in/square/go-jose.v2/json"
 
+	"github.com/dolthub/dolt/go/libraries/doltcore/doltdb/durable"
 	"github.com/dolthub/dolt/go/libraries/doltcore/schema"
 	"github.com/dolthub/dolt/go/libraries/doltcore/schema/encoding"
 	"github.com/dolthub/dolt/go/libraries/utils/set"
@@ -761,6 +762,27 @@ func (root *RootValue) CreateEmptyTable(ctx context.Context, tName string, sch s
 // HashOf gets the hash of the root value
 func (root *RootValue) HashOf() (hash.Hash, error) {
 	return root.valueSt.Hash(root.vrw.Format())
+}
+
+func (root *RootValue) AllAutoIncrements(ctx context.Context) (string, error) {
+	sequences := make(map[string]uint64)
+	err := root.IterTables(ctx, func(name string, table *Table, sch schema.Schema) (stop bool, err error) {
+		seq, err := table.GetAutoIncrementValue(ctx)
+		if err != nil {
+			return false, err
+		}
+		sequences[name] = seq
+		return
+	})
+	if err != nil {
+		return "", err
+	}
+
+	buf, err := json.Marshal(&sequences)
+	if err != nil {
+		return "", err
+	}
+	return string(buf), nil
 }
 
 // UpdateSuperSchemasFromOther updates SuperSchemas of tblNames using SuperSchemas from other.

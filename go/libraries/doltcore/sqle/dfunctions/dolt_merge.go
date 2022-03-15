@@ -121,6 +121,14 @@ func doDoltMerge(ctx *sql.Context, row sql.Row, exprs []sql.Expression) (interfa
 		return conflicts, err
 	}
 
+	s, _ := ws.WorkingRoot().AllAutoIncrements(ctx)
+	fmt.Println(s)
+
+	err = sess.SetWorkingSet(ctx, dbName, ws, nil)
+	if err != nil {
+		return noConflicts, err
+	}
+
 	return conflicts, nil
 }
 
@@ -208,11 +216,6 @@ func mergeIntoWorkingSet(ctx *sql.Context, sess *dsess.DoltSession, roots doltdb
 
 		return ws, hasConflicts, nil
 	} else if err != nil {
-		return ws, noConflicts, err
-	}
-
-	err = sess.SetWorkingSet(ctx, dbName, ws, nil)
-	if err != nil {
 		return ws, noConflicts, err
 	}
 

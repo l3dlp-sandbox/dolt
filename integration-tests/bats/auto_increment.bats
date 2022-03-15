@@ -18,6 +18,39 @@ teardown() {
     teardown_common
 }
 
+
+@test "auto_increment: dolt_merge() works with no auto increment overlap 2" {
+    dolt sql <<SQL
+CREATE TABLE t (
+    pk int PRIMARY KEY AUTO_INCREMENT,
+    c0 int
+);
+
+INSERT INTO t (c0) VALUES (1), (2);
+SELECT DOLT_COMMIT('-a', '-m', 'cm1');
+SELECT DOLT_CHECKOUT('-b', 'test');
+
+INSERT INTO t (c0) VALUES (3), (4);
+SELECT DOLT_COMMIT('-a', '-m', 'cm2');
+SELECT DOLT_CHECKOUT('main');
+
+SELECT DOLT_MERGE('test');
+INSERT INTO t VALUES (NULL,5),(6,6),(NULL,7);
+SQL
+
+
+    run dolt sql -q "SELECT * FROM t ORDER BY pk;" -r csv
+    [ "$status" -eq 0 ]
+    [[ "${lines[0]}" =~ "pk,c0" ]] || false
+    [[ "${lines[1]}" =~ "1,1" ]] || false
+    [[ "${lines[2]}" =~ "2,2" ]] || false
+    [[ "${lines[3]}" =~ "3,3" ]] || false
+    [[ "${lines[4]}" =~ "4,4" ]] || false
+    [[ "${lines[5]}" =~ "5,5" ]] || false
+    [[ "${lines[6]}" =~ "6,6" ]] || false
+    [[ "${lines[7]}" =~ "7,7" ]] || false
+}
+
 @test "auto_increment: insert into auto_increment table" {
     dolt sql -q "INSERT INTO test VALUES (1,11),(2,22),(3,33);"
 
@@ -281,6 +314,7 @@ SQL
     run dolt sql -q "ALTER TABLE test AUTO_INCREMENT = 10;"
     [ "$status" -eq 0 ]
     dolt sql -q "INSERT INTO test VALUES (NULL,10);"
+    dolt sql -q "SELECT * FROM test ORDER BY pk;" -r csv
     run dolt sql -q "SELECT * FROM test ORDER BY pk;" -r csv
     [ "$status" -eq 0 ]
     [[ "$output" =~ "10,10" ]] || false

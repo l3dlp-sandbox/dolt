@@ -17,34 +17,43 @@ package globalstate
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 
 	"github.com/dolthub/go-mysql-server/sql"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/doltdb"
+	"github.com/dolthub/dolt/go/libraries/doltcore/ref"
 	"github.com/dolthub/dolt/go/libraries/doltcore/schema"
 )
 
 func CoerceAutoIncrementValue(val interface{}) (seq uint64, err error) {
+	switch typ := val.(type) {
+	case float32:
+		val = math.Round(float64(typ))
+	case float64:
+		val = math.Round(typ)
+	}
+
 	val, err = sql.Uint64.Convert(val)
 	if err != nil {
 		return 0, err
 	}
-	seq, ok := val.(uint64)
-	if !ok {
-		seq = 0
+	if val == nil || val == uint64(0) {
+		return 1, nil
 	}
-	return
+	return val.(uint64), nil
 }
 
-func NewAutoIncrementTracker(ctx context.Context, root *doltdb.RootValue) (ait AutoIncrementTracker, err error) {
+func NewAutoIncrementTracker(ctx context.Context, ws *doltdb.WorkingSet) (ait AutoIncrementTracker, err error) {
 	ait = AutoIncrementTracker{
+		wsRef:     ws.Ref(),
 		sequences: make(map[string]uint64),
 		mu:        &sync.Mutex{},
 	}
 
 	// collect auto increment values
-	err = root.IterTables(ctx, func(name string, table *doltdb.Table, sch schema.Schema) (bool, error) {
+	err = ws.WorkingRoot().IterTables(ctx, func(name string, table *doltdb.Table, sch schema.Schema) (bool, error) {
 		ok := schema.HasAutoIncrement(sch)
 		if !ok {
 			return false, nil
@@ -60,6 +69,7 @@ func NewAutoIncrementTracker(ctx context.Context, root *doltdb.RootValue) (ait A
 }
 
 type AutoIncrementTracker struct {
+	wsRef     ref.WorkingSetRef
 	sequences map[string]uint64
 	mu        *sync.Mutex
 }

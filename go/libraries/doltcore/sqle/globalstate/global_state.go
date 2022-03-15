@@ -45,7 +45,7 @@ func (g *GlobalState) GetAutoIncrementTracker(ctx context.Context, ws *doltdb.Wo
 	}
 
 	var err error
-	ait, err = NewAutoIncrementTracker(ctx, ws.WorkingRoot())
+	ait, err = NewAutoIncrementTracker(ctx, ws)
 	if err != nil {
 		return AutoIncrementTracker{}, err
 	}

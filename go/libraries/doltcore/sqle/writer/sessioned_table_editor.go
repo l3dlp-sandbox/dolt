@@ -123,6 +123,10 @@ func (ste *sessionedTableEditor) HasEdits() bool {
 	return ste.tableEditor.HasEdits()
 }
 
+func (ste *sessionedTableEditor) SetDirty(dirty bool) {
+	ste.tableEditor.SetDirty(dirty)
+}
+
 // Table implements TableEditor.
 func (ste *sessionedTableEditor) Table(ctx context.Context) (*doltdb.Table, error) {
 	root, err := ste.tableEditSession.Flush(ctx)

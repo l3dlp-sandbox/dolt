@@ -62,7 +62,9 @@ type TableEditor interface {
 	InsertRow(ctx context.Context, r row.Row, errFunc PKDuplicateErrFunc) error
 	UpdateRow(ctx context.Context, old, new row.Row, errFunc PKDuplicateErrFunc) error
 	DeleteRow(ctx context.Context, r row.Row) error
+
 	HasEdits() bool
+	SetDirty(bool)
 
 	SetConstraintViolation(ctx context.Context, k types.LesserValuable, v types.Valuable) error
 
@@ -417,7 +419,7 @@ func (te *pkTableEditor) insertKeyVal(ctx context.Context, keyHash hash.Hash, ke
 		return err
 	}
 
-	te.setDirty(true)
+	te.SetDirty(true)
 	return nil
 }
 
@@ -492,7 +494,7 @@ func (te *pkTableEditor) DeleteByKey(ctx context.Context, key types.Tuple, tagTo
 		return err
 	}
 
-	te.setDirty(true)
+	te.SetDirty(true)
 	return te.tea.Delete(keyHash, key)
 }
 
@@ -590,7 +592,7 @@ func (te *pkTableEditor) UpdateRow(ctx context.Context, dOldRow row.Row, dNewRow
 		return err
 	}
 
-	te.setDirty(true)
+	te.SetDirty(true)
 
 	if kvp, pkExists, err := te.tea.Get(ctx, newHash, dNewKeyVal); err != nil {
 		return err
@@ -739,7 +741,7 @@ func (te *pkTableEditor) SetConstraintViolation(ctx context.Context, k types.Les
 		te.cvEditor = cvMap.Edit()
 	}
 	te.cvEditor.Set(k, v)
-	te.setDirty(true)
+	te.SetDirty(true)
 	return nil
 }
 
@@ -768,7 +770,7 @@ func (te *pkTableEditor) Close(ctx context.Context) error {
 	return nil
 }
 
-func (te *pkTableEditor) setDirty(dirty bool) {
+func (te *pkTableEditor) SetDirty(dirty bool) {
 	var val uint32
 	if dirty {
 		val = 1
