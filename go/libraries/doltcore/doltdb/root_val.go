@@ -17,11 +17,10 @@ package doltdb
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
-
-	"gopkg.in/square/go-jose.v2/json"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/doltdb/durable"
 	"github.com/dolthub/dolt/go/libraries/doltcore/schema"
@@ -764,27 +763,6 @@ func (root *RootValue) HashOf() (hash.Hash, error) {
 	return root.valueSt.Hash(root.vrw.Format())
 }
 
-func (root *RootValue) AllAutoIncrements(ctx context.Context) (string, error) {
-	sequences := make(map[string]uint64)
-	err := root.IterTables(ctx, func(name string, table *Table, sch schema.Schema) (stop bool, err error) {
-		seq, err := table.GetAutoIncrementValue(ctx)
-		if err != nil {
-			return false, err
-		}
-		sequences[name] = seq
-		return
-	})
-	if err != nil {
-		return "", err
-	}
-
-	buf, err := json.Marshal(&sequences)
-	if err != nil {
-		return "", err
-	}
-	return string(buf), nil
-}
-
 // UpdateSuperSchemasFromOther updates SuperSchemas of tblNames using SuperSchemas from other.
 func (root *RootValue) UpdateSuperSchemasFromOther(ctx context.Context, tblNames []string, other *RootValue) (*RootValue, error) {
 	newRoot := root
@@ -1293,4 +1271,25 @@ func (root *RootValue) MapTableHashes(ctx context.Context) (map[string]hash.Hash
 		}
 	}
 	return nameToHash, nil
+}
+
+func DebugAutoIncrements(ctx context.Context, root *RootValue) (string, error) {
+	sequences := make(map[string]uint64)
+	err := root.IterTables(ctx, func(name string, table *Table, sch schema.Schema) (stop bool, err error) {
+		seq, err := table.GetAutoIncrementValue(ctx)
+		if err != nil {
+			return false, err
+		}
+		sequences[name] = seq
+		return
+	})
+	if err != nil {
+		return "", err
+	}
+
+	buf, err := json.Marshal(&sequences)
+	if err != nil {
+		return "", err
+	}
+	return string(buf), nil
 }

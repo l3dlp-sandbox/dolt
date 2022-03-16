@@ -30,7 +30,6 @@ import (
 	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/writer"
 	"github.com/dolthub/dolt/go/libraries/doltcore/table/editor"
 	"github.com/dolthub/dolt/go/libraries/utils/config"
-	"github.com/dolthub/dolt/go/store/hash"
 )
 
 type batchMode int8
@@ -56,11 +55,12 @@ var ErrWorkingSetChanges = goerrors.NewKind("Cannot switch working set, session 
 // Session is the sql.Session implementation used by dolt. It is accessible through a *sql.Context instance
 type Session struct {
 	sql.Session
-	batchMode batchMode
-	username  string
-	email     string
-	dbStates  map[string]*DatabaseSessionState
-	provider  RevisionDatabaseProvider
+	batchMode  batchMode
+	username   string
+	email      string
+	dbStates   map[string]*DatabaseSessionState
+	provider   RevisionDatabaseProvider
+	tempTables map[string][]sql.Table
 }
 
 var _ sql.Session = &Session{}
@@ -68,11 +68,12 @@ var _ sql.Session = &Session{}
 // DefaultSession creates a Session object with default values
 func DefaultSession() *Session {
 	sess := &Session{
-		Session:  sql.NewBaseSession(),
-		username: "",
-		email:    "",
-		dbStates: make(map[string]*DatabaseSessionState),
-		provider: emptyRevisionDatabaseProvider{},
+		Session:    sql.NewBaseSession(),
+		username:   "",
+		email:      "",
+		dbStates:   make(map[string]*DatabaseSessionState),
+		provider:   emptyRevisionDatabaseProvider{},
+		tempTables: make(map[string][]sql.Table),
 	}
 	return sess
 }
@@ -82,11 +83,12 @@ func NewSession(ctx *sql.Context, sqlSess *sql.BaseSession, pro RevisionDatabase
 	username := conf.GetStringOrDefault(env.UserNameKey, "")
 	email := conf.GetStringOrDefault(env.UserEmailKey, "")
 	sess := &Session{
-		Session:  sqlSess,
-		username: username,
-		email:    email,
-		dbStates: make(map[string]*DatabaseSessionState),
-		provider: pro,
+		Session:    sqlSess,
+		username:   username,
+		email:      email,
+		dbStates:   make(map[string]*DatabaseSessionState),
+		provider:   pro,
+		tempTables: make(map[string][]sql.Table),
 	}
 
 	for _, db := range dbs {
@@ -160,12 +162,12 @@ func (sess *Session) Flush(ctx *sql.Context, dbName string) error {
 		return err
 	}
 
-	newRoot, err := dbState.WriteSession.Flush(ctx)
+	ws, err := dbState.WriteSession.Flush(ctx)
 	if err != nil {
 		return err
 	}
 
-	return sess.SetRoot(ctx, dbName, newRoot)
+	return sess.SetRoot(ctx, dbName, ws.WorkingRoot())
 }
 
 // CommitTransaction commits the in-progress transaction for the database named
@@ -580,7 +582,7 @@ func (sess *Session) setRoot(ctx *sql.Context, dbName string, newRoot *doltdb.Ro
 
 	sessionState.WorkingSet = sessionState.WorkingSet.WithWorkingRoot(newRoot)
 
-	err = sessionState.WriteSession.SetRoot(ctx, newRoot)
+	err = sessionState.WriteSession.SetWorkingSet(ctx, sessionState.WorkingSet)
 	if err != nil {
 		return err
 	}
@@ -751,33 +753,6 @@ func (sess *Session) WorkingSet(ctx *sql.Context, dbName string) (*doltdb.Workin
 	return sessionState.WorkingSet, nil
 }
 
-func (sess *Session) GetTempTableRootValue(ctx *sql.Context, dbName string) (*doltdb.RootValue, bool) {
-	dbState, ok, err := sess.LookupDbState(ctx, dbName)
-	if err != nil {
-		return nil, false
-	}
-	if !ok {
-		return nil, false
-	}
-
-	if dbState.TempTableRoot == nil {
-		return nil, false
-	}
-
-	return dbState.TempTableRoot, true
-}
-
-func (sess *Session) SetTempTableRoot(ctx *sql.Context, dbName string, newRoot *doltdb.RootValue) error {
-	dbState, _, err := sess.LookupDbState(ctx, dbName)
-	if err != nil {
-		return err
-	}
-	dbState.TempTableRoot = newRoot
-
-	err = dbState.TempTableWriteSession.SetRoot(ctx, newRoot)
-	return err
-}
-
 // GetHeadCommit returns the parent commit of the current session.
 func (sess *Session) GetHeadCommit(ctx *sql.Context, dbName string) (*doltdb.Commit, error) {
 	dbState, ok, err := sess.LookupDbState(ctx, dbName)
@@ -794,20 +769,17 @@ func (sess *Session) GetHeadCommit(ctx *sql.Context, dbName string) (*doltdb.Com
 // SetSessionVariable is defined on sql.Session. We intercept it here to interpret the special semantics of the system
 // vars that we define. Otherwise we pass it on to the base implementation.
 func (sess *Session) SetSessionVariable(ctx *sql.Context, key string, value interface{}) error {
-	if IsVersionKey(key) {
-		valStr, ok := value.(string)
+	if ok, db := IsHeadRefKey(key); ok {
+		v, ok := value.(string)
 		if !ok {
 			return doltdb.ErrInvalidBranchOrHash
 		}
-
-		wsRef, dbName, err := sess.resolveVersionKey(ctx, key, valStr)
-		if err != nil {
+		if err := sess.setHeadRefSessionVar(ctx, db, v); err != nil {
 			return err
 		}
-
-		if err = sess.SwitchWorkingSet(ctx, dbName, wsRef); err != nil {
-			return err
-		}
+	}
+	if IsReadOnlyVersionKey(key) {
+		return sql.ErrSystemVariableReadOnly.New(key)
 	}
 
 	if strings.ToLower(key) == "foreign_key_checks" {
@@ -815,6 +787,19 @@ func (sess *Session) SetSessionVariable(ctx *sql.Context, key string, value inte
 	}
 
 	return sess.Session.SetSessionVariable(ctx, key, value)
+}
+
+func (sess *Session) setHeadRefSessionVar(ctx *sql.Context, db, value string) error {
+	headRef, err := ref.Parse(value)
+	if err != nil {
+		return err
+	}
+
+	ws, err := ref.WorkingSetRefForHead(headRef)
+	if err != nil {
+		return err
+	}
+	return sess.SwitchWorkingSet(ctx, db, ws)
 }
 
 func (sess *Session) setForeignKeyChecksSessionVar(ctx *sql.Context, key string, value interface{}) error {
@@ -845,84 +830,6 @@ func (sess *Session) setForeignKeyChecksSessionVar(ctx *sql.Context, key string,
 	return sess.Session.SetSessionVariable(ctx, key, value)
 }
 
-func (sess *Session) resolveVersionKey(ctx *sql.Context, key, value string) (ws ref.WorkingSetRef, db string, err error) {
-	var keyType string
-	var ok bool
-
-	if ok, db = IsHeadKey(key); ok {
-		keyType = HeadKeySuffix
-	} else if ok, db = IsHeadRefKey(key); ok {
-		keyType = HeadRefKeySuffix
-	} else if ok, db = IsWorkingKey(key); ok {
-		keyType = WorkingKeySuffix
-	}
-	if !ok {
-		return ws, db, fmt.Errorf("could not resolve version key %s", keyType)
-	}
-
-	ddb, ok := sess.GetDoltDB(ctx, db)
-	if !ok {
-		return ws, db, sql.ErrDatabaseNotFound.New(db)
-	}
-
-	switch keyType {
-	case WorkingKeySuffix:
-		// look for a working set with this hash
-		if !hash.IsValid(value) {
-			return ws, db, doltdb.ErrInvalidHash
-		}
-		ws, err = doltdb.ResolveWorkingSetFromHash(ctx, ddb, hash.Parse(value))
-		if err != nil {
-			return ws, db, err
-		}
-		return ws, db, nil
-
-	case HeadRefKeySuffix:
-		// find the working set for the given branch
-		headRef, err := ref.Parse(value)
-		if err != nil {
-			return ws, db, err
-		}
-		ws, err = ref.WorkingSetRefForHead(headRef)
-		if err != nil {
-			return ws, db, err
-		}
-		return ws, db, nil
-
-	case HeadKeySuffix:
-		// resolve a commit
-		cs, err := doltdb.NewCommitSpec(value)
-		if err != nil {
-			return ws, db, err
-		}
-
-		cwb, err := sess.CWBHeadRef(ctx, db)
-		if err != nil {
-			return ws, db, err
-		}
-
-		cm, err := ddb.Resolve(ctx, cs, cwb)
-		if err != nil {
-			return ws, db, err
-		}
-
-		// look for a branch corresponding to the commit
-		headRef, err := doltdb.ResolveBranchFromHeadCommit(ctx, ddb, cm)
-		if err != nil {
-			return ws, db, err
-		}
-		// look for a working set for the given branch
-		ws, err = ref.WorkingSetRefForHead(headRef)
-		if err != nil {
-			return ws, db, err
-		}
-		return ws, db, nil
-
-	default:
-		panic(fmt.Errorf("could not resolve version key %s", keyType))
-	}
-}
-
 // HasDB returns true if |sess| is tracking state for this database.
 func (sess *Session) HasDB(ctx *sql.Context, dbName string) bool {
 	_, ok, err := sess.lookupDbState(ctx, dbName)
@@ -941,7 +848,7 @@ func (sess *Session) AddDB(ctx *sql.Context, dbState InitialDbState) error {
 	// TODO: get rid of all repo state reader / writer stuff. Until we do, swap out the reader with one of our own, and
 	//  the writer with one that errors out
 	sessionState.dbData = dbState.DbData
-	sessionState.tmpTablesDir = dbState.DbData.Rsw.TempTableFilesDir()
+	sessionState.tmpFileDir = dbState.DbData.Rsw.TempTableFilesDir()
 	adapter := NewSessionStateAdapter(sess, db.Name(), dbState.Remotes, dbState.Branches)
 	sessionState.dbData.Rsr = adapter
 	sessionState.dbData.Rsw = adapter
@@ -986,23 +893,33 @@ func (sess *Session) AddDB(ctx *sql.Context, dbState InitialDbState) error {
 	return nil
 }
 
-// CreateTemporaryTablesRoot creates an empty root value and a table edit session for the purposes of storing
-// temporary tables. This should only be used on demand. That is only when a temporary table is created should we
-// create the root map and edit session map.
-func (sess *Session) CreateTemporaryTablesRoot(ctx *sql.Context, dbName string, ddb *doltdb.DoltDB) error {
-	newRoot, err := doltdb.EmptyRootValue(ctx, ddb.ValueReadWriter())
-	if err != nil {
-		return err
-	}
+func (sess *Session) AddTemporaryTable(ctx *sql.Context, db string, tbl sql.Table) {
+	sess.tempTables[db] = append(sess.tempTables[db], tbl)
+}
 
-	dbState, _, err := sess.LookupDbState(ctx, dbName)
-	if err != nil {
-		return err
+func (sess *Session) DropTemporaryTable(ctx *sql.Context, db, name string) {
+	tables := sess.tempTables[db]
+	for i, tbl := range sess.tempTables[db] {
+		if strings.ToLower(tbl.Name()) == strings.ToLower(name) {
+			tables = append(tables[:i], tables[i+1:]...)
+			break
+		}
 	}
-	nbf := newRoot.VRW().Format()
-	dbState.TempTableWriteSession = writer.NewWriteSession(nbf, newRoot, dbState.WriteSession.GetOptions())
+	sess.tempTables[db] = tables
+}
 
-	return sess.SetTempTableRoot(ctx, dbName, newRoot)
+func (sess *Session) GetTemporaryTable(ctx *sql.Context, db, name string) (sql.Table, bool) {
+	for _, tbl := range sess.tempTables[db] {
+		if strings.ToLower(tbl.Name()) == strings.ToLower(name) {
+			return tbl, true
+		}
+	}
+	return nil, false
+}
+
+// GetAllTemporaryTables returns all temp tables for this session.
+func (sess *Session) GetAllTemporaryTables(ctx *sql.Context, db string) ([]sql.Table, error) {
+	return sess.tempTables[db], nil
 }
 
 // CWBHeadRef returns the branch ref for this session HEAD for the database named

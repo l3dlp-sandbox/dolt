@@ -121,9 +121,6 @@ func doDoltMerge(ctx *sql.Context, row sql.Row, exprs []sql.Expression) (interfa
 		return conflicts, err
 	}
 
-	s, _ := ws.WorkingRoot().AllAutoIncrements(ctx)
-	fmt.Println(s)
-
 	err = sess.SetWorkingSet(ctx, dbName, ws, nil)
 	if err != nil {
 		return noConflicts, err
