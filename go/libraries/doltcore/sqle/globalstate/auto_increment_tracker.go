@@ -100,8 +100,9 @@ func (a AutoIncrementTracker) Next(tbl string, insertVal interface{}) (seq uint6
 	if given >= seq {
 		seq = given
 		a.sequences[tbl] = given
-		a.sequences[tbl]++
 	}
+	a.sequences[tbl]++
+
 	return
 }
 

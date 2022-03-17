@@ -91,10 +91,7 @@ func (te *nomsTableWriter) Insert(ctx *sql.Context, sqlRow sql.Row) error {
 			}
 			return te.tableEditor.InsertKeyVal(ctx, k, v, tagToVal, te.duplicateKeyErrFunc)
 		}
-		if err != nil {
-			return err
-		}
-		return te.updateAutoIncrement(sqlRow)
+		return err
 	}
 	dRow, err := sqlutil.SqlRowToDoltRow(ctx, te.vrw, sqlRow, te.sch)
 	if err != nil {
@@ -158,11 +155,7 @@ func (te *nomsTableWriter) Update(ctx *sql.Context, oldRow sql.Row, newRow sql.R
 		}
 		return te.tableEditor.UpdateRow(ctx, dOldRow, dNewRow, te.duplicateKeyErrFunc)
 	}
-	if err != nil {
-		return err
-	}
-
-	return te.updateAutoIncrement(newRow)
+	return err
 }
 
 func (te *nomsTableWriter) GetNextAutoIncrementValue(ctx *sql.Context, insertVal interface{}) (uint64, error) {
@@ -178,13 +171,6 @@ func (te *nomsTableWriter) SetAutoIncrementValue(ctx *sql.Context, val uint64) e
 	te.tableEditor.SetDirty(true)
 
 	return te.flush(ctx)
-}
-
-func (te *nomsTableWriter) updateAutoIncrement(row sql.Row) (err error) {
-	if te.autoOrd >= 0 {
-		_, err = te.autoInc.Next(te.tableName, row[te.autoOrd])
-	}
-	return
 }
 
 // Close implements Closer

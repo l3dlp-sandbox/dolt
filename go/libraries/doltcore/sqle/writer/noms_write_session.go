@@ -352,6 +352,12 @@ func (s *nomsWriteSession) setWorkingSet(ctx context.Context, ws *doltdb.Working
 			return err
 		}
 
+		v, err := t.GetAutoIncrementValue(ctx)
+		if err != nil {
+			return err
+		}
+		s.tracker.Set(tableName, v)
+
 		newTableEditor, err := editor.NewTableEditor(ctx, t, tSch, tableName, s.opts)
 		if err != nil {
 			return err

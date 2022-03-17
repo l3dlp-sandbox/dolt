@@ -59,14 +59,15 @@ func TestSingleQuery(t *testing.T) {
 func TestSingleWriteQuery(t *testing.T) {
 	tests := []enginetest.WriteQueryTest{
 		{
-			WriteQuery:          `INSERT INTO auto_increment_tbl (c0) SELECT 44 FROM dual`,
-			ExpectedWriteResult: []sql.Row{{sql.OkResult{RowsAffected: 1, InsertID: 4}}},
-			SelectQuery:         "SELECT * FROM auto_increment_tbl",
+			WriteQuery:          "INSERT INTO auto_increment_tbl (c0) values (44),(55)",
+			ExpectedWriteResult: []sql.Row{{sql.OkResult{RowsAffected: 2, InsertID: 4}}},
+			SelectQuery:         "SELECT * FROM auto_increment_tbl ORDER BY pk",
 			ExpectedSelect: []sql.Row{
 				{1, 11},
 				{2, 22},
 				{3, 33},
 				{4, 44},
+				{5, 55},
 			},
 		},
 	}
@@ -246,10 +247,6 @@ func TestComplexIndexQueries(t *testing.T) {
 
 func TestCreateTable(t *testing.T) {
 	enginetest.TestCreateTable(t, newDoltHarness(t))
-}
-
-func TestPkOrdinals(t *testing.T) {
-	enginetest.TestPkOrdinals(t, newDoltHarness(t))
 }
 
 func TestDropTable(t *testing.T) {
