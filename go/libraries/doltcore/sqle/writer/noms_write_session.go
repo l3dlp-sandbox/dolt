@@ -35,11 +35,11 @@ type WriteSession interface {
 	// GetTableWriter creates a TableWriter and adds it to the WriteSession.
 	GetTableWriter(ctx context.Context, table, db string, tracker globalstate.AutoIncrementTracker, setter SessionRootSetter, batched bool) (TableWriter, error)
 
-	// UpdateWorkingSet takes a callback to update this WriteSession's WorkingSet.
-	// WriteSession flushes the pending writes in the session before calling the callback.
+	// UpdateWorkingSet takes a callback to update this WriteSession's WorkingSet. The update method cannot change the
+	// WorkingSetRef of the WriteSession. WriteSession flushes the pending writes in the session before calling the update.
 	UpdateWorkingSet(ctx context.Context, cb func(ctx context.Context, current *doltdb.WorkingSet) (*doltdb.WorkingSet, error)) error
 
-	// SetWorkingSet sets the root for the WriteSession.
+	// SetWorkingSet modifies the state of the WriteSession. The WorkingSetRef of |ws| must match the existing Ref.
 	SetWorkingSet(ctx context.Context, ws *doltdb.WorkingSet) error
 
 	// Flush flushes the pending writes in the session.
@@ -77,10 +77,10 @@ func NewWriteSession(nbf *types.NomsBinFormat, ws *doltdb.WorkingSet, opts edito
 	}
 
 	return &nomsWriteSession{
-		opts:       opts,
 		workingSet: ws,
 		tables:     make(map[string]*sessionedTableEditor),
 		mut:        &sync.RWMutex{},
+		opts:       opts,
 	}
 }
 
@@ -323,6 +323,9 @@ func (s *nomsWriteSession) loadForeignKeys(ctx context.Context, localTableEditor
 func (s *nomsWriteSession) setWorkingSet(ctx context.Context, ws *doltdb.WorkingSet) error {
 	if ws == nil {
 		return fmt.Errorf("cannot set a nomsWriteSession's working set to nil once it has been created")
+	}
+	if s.workingSet != nil && s.workingSet.Ref() != ws.Ref() {
+		return fmt.Errorf("cannot change working set ref using SetWorkingSet")
 	}
 	s.workingSet = ws
 
