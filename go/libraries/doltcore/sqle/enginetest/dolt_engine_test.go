@@ -1730,6 +1730,14 @@ func TestDoltRemote(t *testing.T) {
 	}
 }
 
+func TestDoltUndrop(t *testing.T) {
+	h := newDoltHarnessForLocalFilesystem(t)
+	defer h.Close()
+	for _, script := range DoltUndropTestScripts {
+		enginetest.TestScript(t, h, script)
+	}
+}
+
 type testCommitClock struct {
 	unixNano int64
 }
@@ -2337,7 +2345,10 @@ func TestQueriesPrepared(t *testing.T) {
 func TestStatistics(t *testing.T) {
 	h := newDoltHarness(t)
 	defer h.Close()
-	enginetest.TestStatistics(t, h)
+	for _, script := range queries.StatisticsQueries {
+		h.engine = nil
+		enginetest.TestScript(t, h, script)
+	}
 }
 
 func TestSpatialQueriesPrepared(t *testing.T) {
@@ -2351,7 +2362,10 @@ func TestSpatialQueriesPrepared(t *testing.T) {
 func TestPreparedStatistics(t *testing.T) {
 	h := newDoltHarness(t)
 	defer h.Close()
-	enginetest.TestStatisticsPrepared(t, h)
+	for _, script := range queries.StatisticsQueries {
+		h.engine = nil
+		enginetest.TestScriptPrepared(t, h, script)
+	}
 }
 
 func TestVersionedQueriesPrepared(t *testing.T) {
